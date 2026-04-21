@@ -1,5 +1,5 @@
 #!/bin/bash
-# Arch Linux automated installer with KDE Plasma, NVIDIA (open), GRUB/SDDM themes, Alt+Shift layout switch, Bluetooth, auto-mount HDDs
+# Arch Linux automated installer with KDE Plasma, NVIDIA (open), GRUB/SDDM themes, Alt+Shift, Bluetooth, auto-mount HDDs
 
 set -e
 
@@ -12,26 +12,36 @@ error() { echo -e "${RED}Error: $1${NC}" >&2; exit 1; }
 info() { echo -e "${GREEN}→ $1${NC}"; }
 warn() { echo -e "${YELLOW}⚠ $1${NC}"; }
 
-# Do NOT set LANG/LC_ALL - live ISO may not have en_US.UTF-8
-
 # Check root
 [[ $EUID -ne 0 ]] && error "This script must be run as root (sudo)."
 
 # Internet check
-ping -c 1 archlinux.org &>/dev/null || error "No internet connection. Please configure network (iwctl, dhcpcd)."
+ping -c 1 archlinux.org &>/dev/null || error "No internet connection. Please configure network."
 
 # UEFI check
 [[ -d /sys/firmware/efi/efivars ]] || error "UEFI mode required. Reboot in UEFI."
 
-# Function to select disk from list
+# Improved disk selection: only real disks (exclude loop, sr0, etc.)
 select_disk() {
     local prompt="$1"
-    local disks=($(lsblk -d -o NAME,SIZE -n | awk '{print "/dev/"$1" ("$2")"}'))
-    [[ ${#disks[@]} -eq 0 ]] && error "No disks found."
+    local disks=()
+    while read -r name size; do
+        # Skip loop devices, CD-ROM, and anything that isn't a real disk
+        if [[ ! "$name" =~ ^(loop|sr|ram) ]]; then
+            disks+=("/dev/$name ($size)")
+        fi
+    done < <(lsblk -d -o NAME,SIZE -n 2>/dev/null | grep -v "^loop")
+
+    if [[ ${#disks[@]} -eq 0 ]]; then
+        error "No disks found."
+    fi
+
     echo "$prompt"
-    select disk in "${disks[@]}"; do
-        if [[ -n $disk ]]; then
-            echo "${disk%% *}"
+    PS3="Choose disk number: "
+    select disk_entry in "${disks[@]}"; do
+        if [[ -n $disk_entry ]]; then
+            # Extract device path (first word)
+            echo "${disk_entry%% *}"
             return
         else
             echo "Invalid choice, try again."
@@ -56,21 +66,39 @@ echo
 echo
 warn "Select SYSTEM disk (SSD). ALL DATA on it will be DESTROYED."
 system_disk=$(select_disk "System disk:")
-echo "Selected: $system_disk"
+echo -e "${GREEN}✓ System disk selected: $system_disk${NC}"
 
 echo
 warn "Now specify ADDITIONAL disks (HDD) to be formatted and auto-mounted."
 extra_disks=()
 while true; do
-    read -p "Add a disk (leave empty to finish): " disk
+    echo
+    if [[ ${#extra_disks[@]} -gt 0 ]]; then
+        echo "Currently selected extra disks: ${extra_disks[*]}"
+    fi
+    read -p "Add a disk (enter disk path like /dev/sda, or leave empty to finish): " disk
     [[ -z "$disk" ]] && break
+
+    # Check if disk exists and is not the system disk
     if [[ -b "$disk" ]]; then
-        extra_disks+=("$disk")
-        echo "Added $disk"
+        if [[ "$disk" == "$system_disk" ]]; then
+            echo "❌ Cannot add system disk as extra disk."
+        elif [[ " ${extra_disks[@]} " =~ " ${disk} " ]]; then
+            echo "❌ Disk $disk already added."
+        else
+            extra_disks+=("$disk")
+            echo "✓ Added $disk"
+        fi
     else
-        echo "Disk $disk does not exist, skipping."
+        echo "❌ Disk $disk does not exist. Enter correct path (e.g., /dev/sda)."
     fi
 done
+
+if [[ ${#extra_disks[@]} -gt 0 ]]; then
+    echo -e "${GREEN}✓ Extra disks to format: ${extra_disks[*]}${NC}"
+else
+    echo "No extra disks selected."
+fi
 
 read -p "Hostname (default: arch-kde): " hostname
 hostname=${hostname:-arch-kde}
@@ -101,25 +129,23 @@ mkdir /mnt/boot
 mount "$boot_part" /mnt/boot
 
 # Install base system
-info "Installing base system (this may take a while)..."
+info "Installing base system (may take a while)..."
 pacstrap /mnt base base-devel linux linux-firmware vim nano sudo networkmanager grub efibootmgr
 genfstab -U /mnt >> /mnt/etc/fstab
 
 # Chroot configuration
-info "Configuring system in chroot..."
+info "Configuring system..."
 arch-chroot /mnt /bin/bash <<EOF
 
 ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
 hwclock --systohc
 
-# Locale generation (English + Russian)
 sed -i 's/^#\(en_US.UTF-8\)/\1/' /etc/locale.gen
 sed -i 's/^#\(ru_RU.UTF-8\)/\1/' /etc/locale.gen
 locale-gen
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
 echo "KEYMAP=us" > /etc/vconsole.conf
 
-# Hostname
 echo "$hostname" > /etc/hostname
 cat > /etc/hosts <<HOSTS
 127.0.0.1   localhost
@@ -127,29 +153,22 @@ cat > /etc/hosts <<HOSTS
 127.0.1.1   $hostname.localdomain $hostname
 HOSTS
 
-# Root password
 echo "root:root" | chpasswd
-
-# Create user
 useradd -m -G wheel,audio,video,storage -s /bin/bash "$username"
 echo "$username:$userpass" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
-# Install KDE Plasma, NVIDIA open drivers, Bluetooth, themes
 pacman -S --noconfirm plasma-meta sddm konsole dolphin ark gwenview \
     bluez bluez-utils blueman pipewire pipewire-pulse wireplumber \
     git base-devel grub-customizer \
     nvidia-open nvidia-utils nvidia-settings
 
-# Enable services
 systemctl enable NetworkManager
 systemctl enable bluetooth
 systemctl enable sddm
 
-# Bluetooth auto-enable
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
 
-# Keyboard layout switching Alt+Shift for KDE and X11
 mkdir -p /home/$username/.config
 cat > /home/$username/.config/kxkbrc <<KXKBRC
 [Layout]
@@ -170,20 +189,17 @@ Section "InputClass"
 EndSection
 XKB
 
-# SDDM theme (Sugar Dark)
 git clone https://github.com/MarianArlt/sddm-sugar-dark /tmp/sddm-sugar-dark
 mkdir -p /usr/share/sddm/themes
 cp -r /tmp/sddm-sugar-dark /usr/share/sddm/themes/
 cat > /etc/sddm.conf <<SDDM
 [Theme]
 Current=sddm-sugar-dark
-
 [Autologin]
 User=$username
 Session=plasma
 SDDM
 
-# GRUB theme (Vimix)
 git clone https://github.com/Se7endS/grub-vimix /tmp/grub-vimix
 mkdir -p /boot/grub/themes
 cp -r /tmp/grub-vimix/Vimix /boot/grub/themes/
@@ -194,7 +210,7 @@ EOF
 
 # Additional HDDs
 if [[ ${#extra_disks[@]} -gt 0 ]]; then
-    info "Setting up additional disks..."
+    info "Setting up extra disks..."
     idx=1
     for disk in "${extra_disks[@]}"; do
         info "Formatting $disk ..."
@@ -214,6 +230,5 @@ if [[ ${#extra_disks[@]} -gt 0 ]]; then
     arch-chroot /mnt mount -a
 fi
 
-# Unmount and finish
 umount -R /mnt
 echo -e "${GREEN}Installation complete! Reboot with: reboot${NC}"
