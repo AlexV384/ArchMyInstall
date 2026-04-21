@@ -21,19 +21,17 @@ ping -c 1 archlinux.org &>/dev/null || error "No internet connection. Please con
 # UEFI check
 [[ -d /sys/firmware/efi/efivars ]] || error "UEFI mode required. Reboot in UEFI."
 
-# Function to select a disk (returns device path like /dev/sda)
+# Function to select a disk – all messages go to stderr, only result to stdout
 select_disk() {
     local prompt="$1"
     local disks=()
-    local names=()
     local i=1
 
-    echo "$prompt"
+    echo "$prompt" >&2
     while read -r name size; do
-        # Skip loop, sr, ram, zram
         if [[ ! "$name" =~ ^(loop|sr|ram|zram) ]]; then
             disks+=("/dev/$name")
-            echo "  $i) /dev/$name ($size)"
+            echo "  $i) /dev/$name ($size)" >&2
             ((i++))
         fi
     done < <(lsblk -d -o NAME,SIZE -n 2>/dev/null)
@@ -43,12 +41,12 @@ select_disk() {
     fi
 
     while true; do
-        read -p "Enter disk number (1-${#disks[@]}): " choice
+        read -p "Enter disk number (1-${#disks[@]}): " choice >&2
         if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#disks[@]} ]; then
             echo "${disks[$((choice-1))]}"
             return
         else
-            echo "Invalid choice, try again."
+            echo "Invalid choice, try again." >&2
         fi
     done
 }
