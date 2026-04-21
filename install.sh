@@ -21,27 +21,31 @@ ping -c 1 archlinux.org &>/dev/null || error "No internet connection. Please con
 # UEFI check
 [[ -d /sys/firmware/efi/efivars ]] || error "UEFI mode required. Reboot in UEFI."
 
-# Improved disk selection: only real disks (exclude loop, sr0, etc.)
+# Function to select a disk (returns device path like /dev/sda)
 select_disk() {
     local prompt="$1"
     local disks=()
+    local names=()
+    local i=1
+
+    echo "$prompt"
     while read -r name size; do
-        # Skip loop devices, CD-ROM, and anything that isn't a real disk
-        if [[ ! "$name" =~ ^(loop|sr|ram) ]]; then
-            disks+=("/dev/$name ($size)")
+        # Skip loop, sr, ram, zram
+        if [[ ! "$name" =~ ^(loop|sr|ram|zram) ]]; then
+            disks+=("/dev/$name")
+            echo "  $i) /dev/$name ($size)"
+            ((i++))
         fi
-    done < <(lsblk -d -o NAME,SIZE -n 2>/dev/null | grep -v "^loop")
+    done < <(lsblk -d -o NAME,SIZE -n 2>/dev/null)
 
     if [[ ${#disks[@]} -eq 0 ]]; then
         error "No disks found."
     fi
 
-    echo "$prompt"
-    PS3="Choose disk number: "
-    select disk_entry in "${disks[@]}"; do
-        if [[ -n $disk_entry ]]; then
-            # Extract device path (first word)
-            echo "${disk_entry%% *}"
+    while true; do
+        read -p "Enter disk number (1-${#disks[@]}): " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#disks[@]} ]; then
+            echo "${disks[$((choice-1))]}"
             return
         else
             echo "Invalid choice, try again."
@@ -64,8 +68,7 @@ echo
 [[ "$userpass" != "$userpass2" ]] && error "Passwords do not match."
 
 echo
-warn "Select SYSTEM disk (SSD). ALL DATA on it will be DESTROYED."
-system_disk=$(select_disk "System disk:")
+system_disk=$(select_disk "Select SYSTEM disk (SSD). ALL DATA on it will be DESTROYED:")
 echo -e "${GREEN}✓ System disk selected: $system_disk${NC}"
 
 echo
@@ -76,10 +79,9 @@ while true; do
     if [[ ${#extra_disks[@]} -gt 0 ]]; then
         echo "Currently selected extra disks: ${extra_disks[*]}"
     fi
-    read -p "Add a disk (enter disk path like /dev/sda, or leave empty to finish): " disk
+    read -p "Add a disk (enter path like /dev/sda, or empty to finish): " disk
     [[ -z "$disk" ]] && break
 
-    # Check if disk exists and is not the system disk
     if [[ -b "$disk" ]]; then
         if [[ "$disk" == "$system_disk" ]]; then
             echo "❌ Cannot add system disk as extra disk."
@@ -90,7 +92,7 @@ while true; do
             echo "✓ Added $disk"
         fi
     else
-        echo "❌ Disk $disk does not exist. Enter correct path (e.g., /dev/sda)."
+        echo "❌ Disk $disk does not exist. Use correct path (e.g., /dev/sda)."
     fi
 done
 
