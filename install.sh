@@ -222,11 +222,13 @@ if [[ ${#extra_disks[@]} -gt 0 ]]; then
         [[ "$disk" == *"nvme"* ]] && part="${disk}p1"
         mkfs.ext4 -F "$part"
         UUID=$(blkid -s UUID -o value "$part")
-        mount_point="/mnt/storage$idx"
-        mkdir -p "$mount_point"
+        mount_point="/storage$idx"   # Точка монтирования внутри системы
+        # Создаём каталог внутри chroot
+        arch-chroot /mnt mkdir -p "$mount_point"
         echo "UUID=$UUID $mount_point ext4 defaults,noatime 0 2" >> /mnt/etc/fstab
         ((idx++))
     done
+    # Монтируем все дополнительные диски внутри chroot
     arch-chroot /mnt mount -a
 fi
 
