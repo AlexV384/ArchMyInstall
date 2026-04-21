@@ -12,9 +12,7 @@ error() { echo -e "${RED}Error: $1${NC}" >&2; exit 1; }
 info() { echo -e "${GREEN}→ $1${NC}"; }
 warn() { echo -e "${YELLOW}⚠ $1${NC}"; }
 
-# Force English locale to avoid broken Russian output
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
+# Do NOT set LANG/LC_ALL - live ISO may not have en_US.UTF-8
 
 # Check root
 [[ $EUID -ne 0 ]] && error "This script must be run as root (sudo)."
