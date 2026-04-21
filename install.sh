@@ -189,6 +189,7 @@ Section "InputClass"
 EndSection
 XKB
 
+# SDDM theme (Sugar Dark)
 git clone https://github.com/MarianArlt/sddm-sugar-dark /tmp/sddm-sugar-dark
 mkdir -p /usr/share/sddm/themes
 cp -r /tmp/sddm-sugar-dark /usr/share/sddm/themes/
@@ -200,10 +201,14 @@ User=$username
 Session=plasma
 SDDM
 
+# GRUB theme (Vimix)
 git clone https://github.com/Se7endS/grub-vimix /tmp/grub-vimix
 mkdir -p /boot/grub/themes
 cp -r /tmp/grub-vimix/Vimix /boot/grub/themes/
 echo 'GRUB_THEME="/boot/grub/themes/Vimix/theme.txt"' >> /etc/default/grub
+
+# Установка загрузчика GRUB (исправление!)
+grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck
 grub-mkconfig -o /boot/grub/grub.cfg
 
 EOF
@@ -222,7 +227,7 @@ if [[ ${#extra_disks[@]} -gt 0 ]]; then
         [[ "$disk" == *"nvme"* ]] && part="${disk}p1"
         mkfs.ext4 -F "$part"
         UUID=$(blkid -s UUID -o value "$part")
-        mount_point="/storage$idx"   # Точка монтирования внутри системы
+        mount_point="/storage$idx"   # точка монтирования внутри системы
         # Создаём каталог внутри chroot
         arch-chroot /mnt mkdir -p "$mount_point"
         echo "UUID=$UUID $mount_point ext4 defaults,noatime 0 2" >> /mnt/etc/fstab
