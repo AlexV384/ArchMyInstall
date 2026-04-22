@@ -1,5 +1,5 @@
 #!/bin/bash
-# Arch Linux minimal installer with KDE Plasma and NVIDIA (open)
+# Arch Linux minimal installer with KDE Plasma, NVIDIA (open), IDEs, Russian localization, Tela GRUB theme and extra apps
 
 set -e
 
@@ -130,7 +130,7 @@ mount "$boot_part" /mnt/boot
 
 # Install base system
 info "Installing base system (may take a while)..."
-pacstrap /mnt base base-devel linux linux-firmware vim nano sudo networkmanager grub efibootmgr
+pacstrap /mnt base base-devel linux linux-firmware vim nano sudo networkmanager grub efibootmgr git wget
 genfstab -U /mnt >> /mnt/etc/fstab
 
 # Chroot configuration
@@ -140,10 +140,14 @@ arch-chroot /mnt /bin/bash <<EOF
 ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
 hwclock --systohc
 
+# Generate Russian and English locales
 sed -i 's/^#\(en_US.UTF-8\)/\1/' /etc/locale.gen
 sed -i 's/^#\(ru_RU.UTF-8\)/\1/' /etc/locale.gen
 locale-gen
-echo "LANG=en_US.UTF-8" > /etc/locale.conf
+
+# Set Russian as default language
+echo "LANG=ru_RU.UTF-8" > /etc/locale.conf
+# Keep English keyboard layout in console (for commands), but will add Russian in KDE
 echo "KEYMAP=us" > /etc/vconsole.conf
 
 echo "$hostname" > /etc/hostname
@@ -158,11 +162,18 @@ useradd -m -G wheel,audio,video,storage -s /bin/bash "$username"
 echo "$username:$userpass" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
-# Install KDE Plasma and basic tools
+# Enable multilib repository for Steam
+sed -i '/^#\[multilib\]/,/^#Include/s/^#//' /etc/pacman.conf
+pacman -Sy
+
+# Install KDE Plasma, basic tools and IDEs
 pacman -S --noconfirm plasma-meta konsole dolphin \
-    networkmanager bluez bluez-utils blueman \
+    networkmanager bluez bluez-utils \
     nvidia-open nvidia-utils nvidia-settings \
-    plasma-login-manager
+    plasma-login-manager \
+    code pycharm-community-edition intellij-idea-community-edition android-studio \
+    ttf-liberation ttf-dejavu noto-fonts-cjk noto-fonts-emoji \
+    brave-browser obsidian syncthing texlive-most texlive-lang texstudio vlc steam qbittorrent
 
 # Enable services
 systemctl enable NetworkManager
@@ -172,9 +183,39 @@ systemctl enable plasmalogin
 # Enable Bluetooth auto-start
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
 
+# Configure keyboard layout switching (Alt+Shift) for X11/KDE
+mkdir -p /home/$username/.config
+cat > /home/$username/.config/kxkbrc <<KXKBRC
+[Layout]
+LayoutList=us,ru
+Model=pc105
+Options=grp:alt_shift_toggle
+ResetOldOptions=true
+KXKBRC
+chown -R $username:$username /home/$username/.config
+
+# Also set system-wide XKB configuration
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<XKB
+Section "InputClass"
+    Identifier "system-keyboard"
+    MatchIsKeyboard "on"
+    Option "XkbLayout" "us,ru"
+    Option "XkbOptions" "grp:alt_shift_toggle"
+EndSection
+XKB
+
 # Install GRUB
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck
 grub-mkconfig -o /boot/grub/grub.cfg
+
+# Install Tela GRUB theme
+git clone https://github.com/vinceliuice/grub2-themes.git /tmp/grub2-themes
+cd /tmp/grub2-themes
+chmod +x install.sh
+./install.sh -t tela
+cd /
+rm -rf /tmp/grub2-themes
 
 EOF
 
