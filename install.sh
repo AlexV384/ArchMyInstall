@@ -158,6 +158,7 @@ useradd -m -G wheel,audio,video,storage -s /bin/bash "$username"
 echo "$username:$userpass" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
+pacman -Syu
 pacman -S --noconfirm plasma-meta sddm konsole dolphin ark gwenview \
     bluez bluez-utils blueman pipewire pipewire-pulse wireplumber \
     git base-devel grub-customizer \
