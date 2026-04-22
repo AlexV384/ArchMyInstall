@@ -159,14 +159,15 @@ echo "$username:$userpass" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
 # Install KDE Plasma and basic tools
-pacman -S --noconfirm plasma-meta sddm konsole dolphin \
+pacman -S --noconfirm plasma-meta konsole dolphin \
     networkmanager bluez bluez-utils blueman \
-    nvidia-open nvidia-utils nvidia-settings
+    nvidia-open nvidia-utils nvidia-settings \
+    plasma-login-manager
 
 # Enable services
 systemctl enable NetworkManager
 systemctl enable bluetooth
-systemctl enable sddm
+systemctl enable plasmalogin
 
 # Enable Bluetooth auto-start
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
