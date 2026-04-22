@@ -1,5 +1,5 @@
 #!/bin/bash
-# Arch Linux minimal installer with KDE Plasma, NVIDIA (open), IDEs, Russian localization, Tela GRUB theme and extra apps
+# Arch Linux automated installer with KDE Plasma, NVIDIA, IDEs, and AUR support
 
 set -e
 
@@ -164,17 +164,40 @@ echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
 # Enable multilib repository for Steam
 sed -i '/^#\[multilib\]/,/^#Include/s/^#//' /etc/pacman.conf
-# Refresh package lists (required after enabling multilib)
 pacman -Sy --noconfirm
 
-# Install KDE Plasma, basic tools, IDEs, and extra apps
+# Install KDE Plasma, basic tools, and NVIDIA drivers
 pacman -S --noconfirm plasma-meta konsole dolphin \
     networkmanager bluez bluez-utils \
     nvidia-open nvidia-utils nvidia-settings \
-    plasma-login-manager \
-    code pycharm-community-edition intellij-idea-community-edition android-studio \
-    ttf-liberation ttf-dejavu noto-fonts-cjk noto-fonts-emoji \
-    brave-browser obsidian syncthing texlive-most texlive-lang texstudio vlc steam qbittorrent
+    plasma-login-manager
+
+# Install IDEs (all available in official repos)
+pacman -S --noconfirm code pycharm-community-edition intellij-idea-community-edition
+
+# Install fonts and language support
+pacman -S --noconfirm ttf-liberation ttf-dejavu noto-fonts-cjk noto-fonts-emoji
+
+# Install extra applications (those in official repos)
+pacman -S --noconfirm syncthing texstudio vlc steam qbittorrent texlive-core texlive-latexextra texlive-fontsextra texlive-langcyrillic
+
+# --- AUR Helper and AUR Packages Installation ---
+# Install yay (AUR helper) from source
+if ! command -v yay &>/dev/null; then
+    info "Installing yay (AUR helper)..."
+    cd /tmp
+    git clone https://aur.archlinux.org/yay.git
+    cd yay
+    makepkg -si --noconfirm
+    cd /
+    rm -rf /tmp/yay
+fi
+
+# Install packages from AUR
+info "Installing packages from AUR..."
+yay -S --noconfirm android-studio brave-bin obsidian
+
+# Note: 'brave-bin' is the preferred package name for Brave browser from AUR.
 
 # Enable services
 systemctl enable NetworkManager
@@ -184,7 +207,7 @@ systemctl enable plasmalogin
 # Enable Bluetooth auto-start
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
 
-# Configure keyboard layout switching (Alt+Shift) for X11/KDE
+# Configure keyboard layout switching (Alt+Shift) for KDE
 mkdir -p /home/$username/.config
 cat > /home/$username/.config/kxkbrc <<KXKBRC
 [Layout]
@@ -195,7 +218,7 @@ ResetOldOptions=true
 KXKBRC
 chown -R $username:$username /home/$username/.config
 
-# Also set system-wide XKB configuration
+# System-wide XKB configuration
 mkdir -p /etc/X11/xorg.conf.d
 cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<XKB
 Section "InputClass"
