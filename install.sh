@@ -1,5 +1,5 @@
 #!/bin/bash
-# Arch Linux automated installer with KDE Plasma, NVIDIA (open), GRUB/SDDM themes, Alt+Shift, Bluetooth, auto-mount HDDs
+# Arch Linux minimal installer with KDE Plasma and NVIDIA (open)
 
 set -e
 
@@ -158,10 +158,9 @@ useradd -m -G wheel,audio,video,storage -s /bin/bash "$username"
 echo "$username:$userpass" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
-# Install packages (no grub-customizer – it's in AUR)
-pacman -S --noconfirm plasma-meta sddm konsole dolphin ark gwenview \
-    bluez bluez-utils blueman pipewire pipewire-pulse wireplumber \
-    git base-devel \
+# Install KDE Plasma and basic tools
+pacman -S --noconfirm plasma-meta sddm konsole dolphin \
+    networkmanager bluez bluez-utils blueman \
     nvidia-open nvidia-utils nvidia-settings
 
 # Enable services
@@ -169,47 +168,8 @@ systemctl enable NetworkManager
 systemctl enable bluetooth
 systemctl enable sddm
 
-# Bluetooth auto-enable
+# Enable Bluetooth auto-start
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
-
-# Keyboard layout Alt+Shift
-mkdir -p /home/$username/.config
-cat > /home/$username/.config/kxkbrc <<KXKBRC
-[Layout]
-LayoutList=us,ru
-Model=pc105
-Options=grp:alt_shift_toggle
-ResetOldOptions=true
-KXKBRC
-chown -R $username:$username /home/$username/.config
-
-mkdir -p /etc/X11/xorg.conf.d
-cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<XKB
-Section "InputClass"
-    Identifier "system-keyboard"
-    MatchIsKeyboard "on"
-    Option "XkbLayout" "us,ru"
-    Option "XkbOptions" "grp:alt_shift_toggle"
-EndSection
-XKB
-
-# SDDM theme (Sugar Dark)
-git clone https://github.com/MarianArlt/sddm-sugar-dark /tmp/sddm-sugar-dark
-mkdir -p /usr/share/sddm/themes
-cp -r /tmp/sddm-sugar-dark /usr/share/sddm/themes/
-cat > /etc/sddm.conf <<SDDM
-[Theme]
-Current=sddm-sugar-dark
-[Autologin]
-User=$username
-Session=plasma
-SDDM
-
-# GRUB theme (Vimix)
-git clone https://github.com/Se7endS/grub-vimix /tmp/grub-vimix
-mkdir -p /boot/grub/themes
-cp -r /tmp/grub-vimix/Vimix /boot/grub/themes/
-echo 'GRUB_THEME="/boot/grub/themes/Vimix/theme.txt"' >> /etc/default/grub
 
 # Install GRUB
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck
