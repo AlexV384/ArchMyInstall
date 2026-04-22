@@ -21,7 +21,7 @@ ping -c 1 archlinux.org &>/dev/null || error "No internet connection. Please con
 # UEFI check
 [[ -d /sys/firmware/efi/efivars ]] || error "UEFI mode required. Reboot in UEFI."
 
-# Function to select a disk – all messages go to stderr, only result to stdout
+# Function to select a disk
 select_disk() {
     local prompt="$1"
     local disks=()
@@ -158,18 +158,21 @@ useradd -m -G wheel,audio,video,storage -s /bin/bash "$username"
 echo "$username:$userpass" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
-pacman -Syu
-pacman -S plasma-meta sddm konsole dolphin ark gwenview \
+# Install packages (no grub-customizer – it's in AUR)
+pacman -S --noconfirm plasma-meta sddm konsole dolphin ark gwenview \
     bluez bluez-utils blueman pipewire pipewire-pulse wireplumber \
-    git base-devel grub-customizer \
+    git base-devel \
     nvidia-open nvidia-utils nvidia-settings
 
+# Enable services
 systemctl enable NetworkManager
 systemctl enable bluetooth
 systemctl enable sddm
 
+# Bluetooth auto-enable
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
 
+# Keyboard layout Alt+Shift
 mkdir -p /home/$username/.config
 cat > /home/$username/.config/kxkbrc <<KXKBRC
 [Layout]
@@ -208,7 +211,7 @@ mkdir -p /boot/grub/themes
 cp -r /tmp/grub-vimix/Vimix /boot/grub/themes/
 echo 'GRUB_THEME="/boot/grub/themes/Vimix/theme.txt"' >> /etc/default/grub
 
-# Установка загрузчика GRUB (исправление!)
+# Install GRUB
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck
 grub-mkconfig -o /boot/grub/grub.cfg
 
@@ -228,13 +231,11 @@ if [[ ${#extra_disks[@]} -gt 0 ]]; then
         [[ "$disk" == *"nvme"* ]] && part="${disk}p1"
         mkfs.ext4 -F "$part"
         UUID=$(blkid -s UUID -o value "$part")
-        mount_point="/storage$idx"   # точка монтирования внутри системы
-        # Создаём каталог внутри chroot
+        mount_point="/storage$idx"
         arch-chroot /mnt mkdir -p "$mount_point"
         echo "UUID=$UUID $mount_point ext4 defaults,noatime 0 2" >> /mnt/etc/fstab
         ((idx++))
     done
-    # Монтируем все дополнительные диски внутри chroot
     arch-chroot /mnt mount -a
 fi
 
