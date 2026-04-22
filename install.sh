@@ -159,7 +159,7 @@ echo "$username:$userpass" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
 pacman -Syu
-pacman -S --noconfirm plasma-meta sddm konsole dolphin ark gwenview \
+pacman -S plasma-meta sddm konsole dolphin ark gwenview \
     bluez bluez-utils blueman pipewire pipewire-pulse wireplumber \
     git base-devel grub-customizer \
     nvidia-open nvidia-utils nvidia-settings
