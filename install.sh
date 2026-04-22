@@ -147,7 +147,7 @@ locale-gen
 
 # Set Russian as default language
 echo "LANG=ru_RU.UTF-8" > /etc/locale.conf
-# Keep English keyboard layout in console (for commands), but will add Russian in KDE
+# Keep English keyboard layout in console (for commands)
 echo "KEYMAP=us" > /etc/vconsole.conf
 
 echo "$hostname" > /etc/hostname
@@ -164,9 +164,10 @@ echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
 # Enable multilib repository for Steam
 sed -i '/^#\[multilib\]/,/^#Include/s/^#//' /etc/pacman.conf
-pacman -Sy
+# Refresh package lists (required after enabling multilib)
+pacman -Sy --noconfirm
 
-# Install KDE Plasma, basic tools and IDEs
+# Install KDE Plasma, basic tools, IDEs, and extra apps
 pacman -S --noconfirm plasma-meta konsole dolphin \
     networkmanager bluez bluez-utils \
     nvidia-open nvidia-utils nvidia-settings \
