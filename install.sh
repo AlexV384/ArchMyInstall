@@ -1,7 +1,8 @@
 #!/bin/bash
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
-# ✅ Fixed lsblk tree characters | ✅ Reliable partition activation | ✅ GRUB recovery script
-# ✅ Logging functions now available inside chroot
+# ✅ Fixed lsblk tree characters | ✅ Reliable partition activation
+# ✅ GRUB recovery script | ✅ Logging functions inside chroot
+# ✅ NVIDIA driver via DKMS (avoids "target not found" after kernel update)
 
 set -euo pipefail
 
@@ -117,7 +118,7 @@ parted -s "$system_disk" mkpart primary ext4 513MiB 100%
 # Force kernel to reread partition table and activate partitions
 partprobe "$system_disk" 2>/dev/null || true
 udevadm settle
-partx -a "$system_disk" 2>/dev/null || true   # activate new partitions
+partx -a "$system_disk" 2>/dev/null || true
 udevadm trigger --subsystem-match=block 2>/dev/null || true
 sleep 1
 
@@ -160,7 +161,7 @@ log "Configuring system..."
 arch-chroot /mnt /bin/bash << 'CHROOT_EOF'
 set -e
 
-# --- Define logging functions (same as outside) ---
+# --- Logging functions (same as outside) ---
 BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 log()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 success(){ echo -e "${GREEN}[✓]${NC} $1"; }
@@ -203,11 +204,12 @@ pacman -S --noconfirm \
     dolphin konsole krunner \
     discover packagekit-qt6
 
-# NVIDIA drivers (stable branch)
+# NVIDIA drivers (DKMS for reliable kernel compatibility)
+log "Installing kernel headers and DKMS..."
+pacman -S --noconfirm linux-headers dkms
+
 log "Installing NVIDIA drivers..."
-pacman -S --noconfirm \
-    nvidia nvidia-utils nvidia-settings \
-    lib32-nvidia-utils
+pacman -S --noconfirm nvidia-dkms nvidia-utils nvidia-settings lib32-nvidia-utils
 
 # mkinitcpio for NVIDIA
 sed -i 's/^MODULES=()/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
