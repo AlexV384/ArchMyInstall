@@ -1,6 +1,7 @@
 #!/bin/bash
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
 # ✅ Fixed lsblk tree characters | ✅ Reliable partition activation | ✅ GRUB recovery script
+# ✅ Logging functions now available inside chroot
 
 set -euo pipefail
 
@@ -158,6 +159,13 @@ export USERPASS="$pass1" USERNAME="$username" HOSTNAME="$hostname"
 log "Configuring system..."
 arch-chroot /mnt /bin/bash << 'CHROOT_EOF'
 set -e
+
+# --- Define logging functions (same as outside) ---
+BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+log()    { echo -e "${BLUE}[INFO]${NC} $1"; }
+success(){ echo -e "${GREEN}[✓]${NC} $1"; }
+warn()   { echo -e "${YELLOW}[⚠]${NC} $1"; }
+error()  { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
 
 USERNAME="${USERNAME}"
 USERPASS="${USERPASS}"
