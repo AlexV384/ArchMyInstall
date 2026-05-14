@@ -1,7 +1,7 @@
 #!/bin/bash
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
 # ✅ English interface (no encoding issues) | ✅ Disk selection shown BEFORE input
-# ✅ Separate GRUB recovery script available
+# ✅ Reliable partition wait loop | ✅ Separate GRUB recovery script available
 
 set -euo pipefail
 
@@ -113,11 +113,24 @@ parted -s "$system_disk" mklabel gpt
 parted -s "$system_disk" mkpart primary fat32 1MiB 513MiB
 parted -s "$system_disk" set 1 esp on
 parted -s "$system_disk" mkpart primary ext4 513MiB 100%
-partprobe "$system_disk" 2>/dev/null || sleep 2
+
+# Force kernel to reread partition table and wait for devices
+partprobe "$system_disk" 2>/dev/null || true
+udevadm settle
+partx -u "$system_disk" 2>/dev/null || true
 
 boot_part=$(get_partition "$system_disk" 1)
 root_part=$(get_partition "$system_disk" 2)
 log "Partitions: EFI=$boot_part | ROOT=$root_part"
+
+# Wait for partition block devices to appear (up to 10 seconds)
+for part in "$boot_part" "$root_part"; do
+    for ((i=0; i<10; i++)); do
+        [[ -b "$part" ]] && break
+        sleep 1
+    done
+    [[ -b "$part" ]] || error "Partition $part did not appear after 10 seconds."
+done
 
 # Formatting
 mkfs.fat -F32 -n "ARCH_EFI" "$boot_part" || error "Failed to format EFI partition."
@@ -342,9 +355,17 @@ if [[ ${#extra_disks[@]} -gt 0 ]]; then
         wipefs -a "$disk" 2>/dev/null || true
         parted -s "$disk" mklabel gpt
         parted -s "$disk" mkpart primary ext4 1MiB 100%
-        partprobe "$disk" 2>/dev/null || sleep 1
+        partprobe "$disk" 2>/dev/null || true
+        udevadm settle
+        partx -u "$disk" 2>/dev/null || true
 
         part=$(get_partition "$disk" 1)
+        for ((i=0; i<10; i++)); do
+            [[ -b "$part" ]] && break
+            sleep 1
+        done
+        [[ -b "$part" ]] || error "Partition $part for additional disk did not appear."
+
         mkfs.ext4 -F -L "STORAGE$idx" "$part" || error "mkfs failed: $part"
 
         UUID=$(blkid -s UUID -o value "$part")
@@ -372,5 +393,5 @@ After reboot you will boot into KDE Plasma 6.
 - Press Meta (Windows) to open the launcher.
 - Meta+Space for KRunner (search, commands, calculator).
 
-To set up dual‑boot with Windows 11, follow the instructions below (including the automatic GRUB recovery step).
+To set up dual‑boot with Windows 11, follow the instructions (GRUB recovery script available).
 EOF
