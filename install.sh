@@ -2,7 +2,7 @@
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
 # ✅ Fixed lsblk tree characters | ✅ Reliable partition activation
 # ✅ GRUB recovery script | ✅ Logging functions inside chroot
-# ✅ NVIDIA driver via DKMS (avoids "target not found" after kernel update)
+# ✅ NVIDIA driver via DKMS | ✅ Go installed for AUR builds (fixes yay)
 
 set -euo pipefail
 
@@ -223,6 +223,10 @@ pacman -S --noconfirm \
     ttf-liberation ttf-dejavu noto-fonts noto-fonts-cjk noto-fonts-emoji \
     syncthing texstudio vlc steam qbittorrent \
     texlive-core texlive-latexextra texlive-fontsextra texlive-langcyrillic
+
+# --- Install Go (required for building AUR packages like yay) ---
+log "Installing Go (for AUR builds)..."
+pacman -S --noconfirm go
 
 # AUR helper (yay)
 log "Setting up yay (AUR helper)..."
