@@ -1,7 +1,6 @@
 #!/bin/bash
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
-# ✅ English interface (no encoding issues) | ✅ Disk selection shown BEFORE input
-# ✅ Reliable partition wait loop | ✅ Separate GRUB recovery script available
+# ✅ Fixed lsblk tree characters | ✅ Reliable partition activation | ✅ GRUB recovery script
 
 set -euo pipefail
 
@@ -44,10 +43,10 @@ select_disk() {
     done
 }
 
-# Partition name detection (NVMe/SATA safe)
+# Partition name detection (NVMe/SATA safe) – FIXED: added -l to avoid tree characters
 get_partition() {
     local disk="$1" num="$2" part
-    part=$(lsblk -n -o NAME "$disk" 2>/dev/null | tail -n +2 | sed -n "${num}p")
+    part=$(lsblk -n -l -o NAME "$disk" 2>/dev/null | tail -n +2 | sed -n "${num}p")
     [[ -n "$part" ]] && { echo "/dev/$part"; return; }
     part=$(blkid -t PART_ENTRY_NUMBER="$num" -o device 2>/dev/null | grep "^${disk}" | head -1)
     [[ -n "$part" ]] && { echo "$part"; return; }
@@ -114,10 +113,12 @@ parted -s "$system_disk" mkpart primary fat32 1MiB 513MiB
 parted -s "$system_disk" set 1 esp on
 parted -s "$system_disk" mkpart primary ext4 513MiB 100%
 
-# Force kernel to reread partition table and wait for devices
+# Force kernel to reread partition table and activate partitions
 partprobe "$system_disk" 2>/dev/null || true
 udevadm settle
-partx -u "$system_disk" 2>/dev/null || true
+partx -a "$system_disk" 2>/dev/null || true   # activate new partitions
+udevadm trigger --subsystem-match=block 2>/dev/null || true
+sleep 1
 
 boot_part=$(get_partition "$system_disk" 1)
 root_part=$(get_partition "$system_disk" 2)
@@ -357,7 +358,9 @@ if [[ ${#extra_disks[@]} -gt 0 ]]; then
         parted -s "$disk" mkpart primary ext4 1MiB 100%
         partprobe "$disk" 2>/dev/null || true
         udevadm settle
-        partx -u "$disk" 2>/dev/null || true
+        partx -a "$disk" 2>/dev/null || true
+        udevadm trigger --subsystem-match=block 2>/dev/null || true
+        sleep 1
 
         part=$(get_partition "$disk" 1)
         for ((i=0; i<10; i++)); do
