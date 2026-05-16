@@ -1,376 +1,707 @@
 #!/bin/bash
-# Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
-# ✅ EWW top panel | ✅ Rofi launcher | ✅ PLM login manager with SDDM fallback
-# ✅ Fixed SSL certs & time sync for AUR | ✅ DKMS + Go + Rust
+# =============================================================================
+# Arch Linux Automated Installer — KDE Plasma 6 + NVIDIA + AUR
+# =============================================================================
+# ✅ KDE Plasma 6
+# ✅ NVIDIA RTX (DKMS)
+# ✅ yay AUR helper
+# ✅ EWW + Rofi
+# ✅ SDDM fallback
+# ✅ Dual-boot ready
+# ✅ NVMe/SATA safe
+# ✅ Auto mirror optimization
+# ✅ Stable AUR/Git handling
+# ✅ Extra disks auto-mount
+# =============================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-log()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-success(){ echo -e "${GREEN}[✓]${NC} $1"; }
-warn()   { echo -e "${YELLOW}[⚠]${NC} $1"; }
-error()  { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
+# -----------------------------------------------------------------------------
+# Colors & logging
+# -----------------------------------------------------------------------------
 
-# Check prerequisites
-[[ $EUID -eq 0 ]] || error "Run with root privileges: sudo $0"
-ping -c 2 -W 5 archlinux.org &>/dev/null || error "No internet connection."
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log()     { echo -e "${BLUE}[INFO]${NC} $1"; }
+success() { echo -e "${GREEN}[✓]${NC} $1"; }
+warn()    { echo -e "${YELLOW}[⚠]${NC} $1"; }
+error()   { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
+
+trap 'error "Installer failed on line $LINENO"' ERR
+
+# -----------------------------------------------------------------------------
+# Checks
+# -----------------------------------------------------------------------------
+
+[[ $EUID -eq 0 ]] || error "Run as root."
+
+ping -c 2 archlinux.org &>/dev/null || error "No internet connection."
+
 [[ -d /sys/firmware/efi ]] || error "System must be booted in UEFI mode."
 
-# Disk selection with model and size (output goes to stderr so it's visible when called in subshell)
+# -----------------------------------------------------------------------------
+# Disk selector
+# -----------------------------------------------------------------------------
+
 select_disk() {
-    local prompt="$1" exclude="${2:-}"
-    local disks=() i=1
-    echo -e "\n$prompt\n─────────────────────────────────────" >&2
-    while IFS= read -r line; do
+    local prompt="$1"
+    local exclude="${2:-}"
+
+    local disks=()
+    local i=1
+
+    echo -e "\n$prompt"
+    echo "────────────────────────────────────────────"
+
+    while read -r line; do
         local name size model
-        name=$(echo "$line" | awk '{print $1}')
-        size=$(echo "$line" | awk '{print $2}')
-        model=$(lsblk -d -o MODEL -n "/dev/$name" 2>/dev/null | xargs 2>/dev/null || echo "Unknown")
-        [[ "$name" =~ ^(loop|sr|ram|zram) ]] && continue
+
+        name=$(awk '{print $1}' <<< "$line")
+        size=$(awk '{print $2}' <<< "$line")
+
+        [[ "$name" =~ ^(loop|sr|ram|zram)$ ]] && continue
         [[ -n "$exclude" && "$name" == "$exclude" ]] && continue
+
+        model=$(lsblk -d -o MODEL -n "/dev/$name" 2>/dev/null | xargs)
+
         disks+=("/dev/$name")
-        printf "  %d) %-12s | %-10s | %s\n" "$i" "/dev/$name" "$size" "$model" >&2
+
+        printf " %d) %-12s %-10s %s\n" \
+            "$i" "/dev/$name" "$size" "$model"
+
         ((i++))
-    done < <(lsblk -d -o NAME,SIZE -n 2>/dev/null | sort)
-    echo "─────────────────────────────────────" >&2
+
+    done < <(lsblk -d -o NAME,SIZE -n)
+
+    echo "────────────────────────────────────────────"
+
     [[ ${#disks[@]} -eq 0 ]] && error "No disks found."
+
     while true; do
-        read -rp "Enter disk number (1-${#disks[@]}): " choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#disks[@]} )); then
-            echo "${disks[$((choice-1))]}"; return
-        else
-            warn "Invalid choice." >&2
+        read -rp "Choose disk [1-${#disks[@]}]: " choice
+
+        if [[ "$choice" =~ ^[0-9]+$ ]] &&
+           (( choice >= 1 && choice <= ${#disks[@]} ))
+        then
+            echo "${disks[$((choice-1))]}"
+            return
         fi
+
+        warn "Invalid selection."
     done
 }
 
-# Partition name detection (NVMe/SATA safe)
+# -----------------------------------------------------------------------------
+# Partition helper
+# -----------------------------------------------------------------------------
+
 get_partition() {
-    local disk="$1" num="$2" part
-    part=$(lsblk -n -l -o NAME "$disk" 2>/dev/null | tail -n +2 | sed -n "${num}p")
-    [[ -n "$part" ]] && { echo "/dev/$part"; return; }
-    part=$(blkid -t PART_ENTRY_NUMBER="$num" -o device 2>/dev/null | grep "^${disk}" | head -1)
-    [[ -n "$part" ]] && { echo "$part"; return; }
-    [[ "$disk" =~ nvme ]] && { echo "${disk}p${num}"; return; }
-    echo "${disk}${num}"
+    local disk="$1"
+    local num="$2"
+
+    if [[ "$disk" =~ nvme ]]; then
+        echo "${disk}p${num}"
+    else
+        echo "${disk}${num}"
+    fi
 }
 
+# -----------------------------------------------------------------------------
+# Banner
+# -----------------------------------------------------------------------------
+
 clear
-cat << 'EOF'
+
+cat << "EOF"
 ╔════════════════════════════════════════════╗
-║  Arch Linux Installer — KDE Plasma 6       ║
-║  🎨 EWW Panel | 🚀 Rofi Launcher          ║
-║  ✅ RTX 3060 | ✅ Dual-Boot Ready          ║
+║        Arch Linux Installer — KDE 6       ║
+║                                            ║
+║   ✅ NVIDIA RTX 3060                      ║
+║   ✅ EWW + Rofi                           ║
+║   ✅ AUR Support                          ║
+║   ✅ Dual Boot Ready                      ║
 ╚════════════════════════════════════════════╝
 EOF
 
+# -----------------------------------------------------------------------------
 # User input
-read -rp "Username (letters only): " username
-[[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]] || error "Invalid username."
-read -rsp "Password for $username: " pass1; echo
-read -rsp "Confirm password: " pass2; echo
-[[ "$pass1" == "$pass2" ]] || error "Passwords do not match."
-read -rp "Hostname (default: arch-kde): " hostname
+# -----------------------------------------------------------------------------
+
+read -rp "Username: " username
+
+[[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]] \
+    || error "Invalid username."
+
+read -rsp "Password: " pass1
+echo
+
+read -rsp "Confirm password: " pass2
+echo
+
+[[ "$pass1" == "$pass2" ]] \
+    || error "Passwords do not match."
+
+read -rp "Hostname [arch-kde]: " hostname
 hostname="${hostname:-arch-kde}"
 
+# -----------------------------------------------------------------------------
 # Disk selection
-echo ""
-warn "WARNING: The system disk will be COMPLETELY ERASED!"
-system_disk=$(select_disk "Select disk for Arch Linux (SSD recommended):")
-success "System disk: $system_disk"
+# -----------------------------------------------------------------------------
+
+echo
+
+warn "WARNING: ALL DATA ON THE SYSTEM DISK WILL BE ERASED."
+
+system_disk=$(select_disk "Select installation disk:")
+
+success "Selected: $system_disk"
 
 extra_disks=()
-warn "Additional disks will be formatted and mounted at /storageN"
+
+echo
+warn "Optional additional disks will be formatted and mounted."
+
 while true; do
-    [[ ${#extra_disks[@]} -gt 0 ]] && echo "Added: ${extra_disks[*]}"
-    read -rp "Add a disk (e.g., /dev/sdb) or Enter to continue: " disk
+
+    [[ ${#extra_disks[@]} -gt 0 ]] &&
+        echo "Added: ${extra_disks[*]}"
+
+    read -rp "Add extra disk or press Enter: " disk
+
     [[ -z "$disk" ]] && break
-    [[ ! -b "$disk" ]] && { warn "Device $disk does not exist."; continue; }
-    [[ "$disk" == "$system_disk" ]] && { warn "This is the system disk – skipped."; continue; }
-    [[ " ${extra_disks[*]:-} " =~ " $disk " ]] && { warn "Disk already added."; continue; }
-    extra_disks+=("$disk"); success "Added: $disk"
+
+    [[ ! -b "$disk" ]] && {
+        warn "Disk not found."
+        continue
+    }
+
+    [[ "$disk" == "$system_disk" ]] && {
+        warn "System disk already selected."
+        continue
+    }
+
+    extra_disks+=("$disk")
+
 done
 
-# Confirmation
-echo ""
-warn "Confirm installation:"
-echo "  • System disk: $system_disk (will be erased)"
-[[ ${#extra_disks[@]} -gt 0 ]] && echo "  • Additional disks: ${extra_disks[*]}"
-echo "  • Username: $username"
-echo "  • Hostname: $hostname"
-read -rp "Proceed? (yes/y): " confirm
-[[ "$confirm" =~ ^(yes|y)$ ]] || error "Installation cancelled."
+# -----------------------------------------------------------------------------
+# Confirm
+# -----------------------------------------------------------------------------
 
-# Time setup
-log "Setting timezone (Europe/Moscow)..."
+echo
+warn "INSTALLATION SUMMARY"
+echo " System disk: $system_disk"
+echo " Hostname:    $hostname"
+echo " Username:    $username"
+
+[[ ${#extra_disks[@]} -gt 0 ]] &&
+    echo " Extra disks: ${extra_disks[*]}"
+
+echo
+
+read -rp "Continue? [yes/y]: " confirm
+
+[[ "$confirm" =~ ^(yes|y)$ ]] \
+    || error "Installation aborted."
+
+# -----------------------------------------------------------------------------
+# Time sync
+# -----------------------------------------------------------------------------
+
+log "Synchronizing time..."
+
 timedatectl set-ntp true
-ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
 
+# -----------------------------------------------------------------------------
+# Mirrors
+# -----------------------------------------------------------------------------
+
+log "Optimizing mirrors..."
+
+pacman -Sy --noconfirm reflector
+
+reflector \
+    --latest 20 \
+    --protocol https \
+    --sort rate \
+    --save /etc/pacman.d/mirrorlist
+
+# -----------------------------------------------------------------------------
 # Partitioning
-log "Partitioning $system_disk ..."
-wipefs -a "$system_disk" 2>/dev/null || true
-parted -s "$system_disk" mklabel gpt
-parted -s "$system_disk" mkpart primary fat32 1MiB 513MiB
-parted -s "$system_disk" set 1 esp on
-parted -s "$system_disk" mkpart primary ext4 513MiB 100%
+# -----------------------------------------------------------------------------
 
-# Force kernel to reread partition table and activate partitions
-partprobe "$system_disk" 2>/dev/null || true
+log "Partitioning disk..."
+
+wipefs -af "$system_disk"
+
+parted -s "$system_disk" mklabel gpt
+
+parted -s "$system_disk" mkpart ESP fat32 1MiB 513MiB
+parted -s "$system_disk" set 1 esp on
+
+parted -s "$system_disk" mkpart ROOT ext4 513MiB 100%
+
+partprobe "$system_disk"
 udevadm settle
-partx -a "$system_disk" 2>/dev/null || true
-udevadm trigger --subsystem-match=block 2>/dev/null || true
-sleep 1
+
+sleep 2
 
 boot_part=$(get_partition "$system_disk" 1)
 root_part=$(get_partition "$system_disk" 2)
-log "Partitions: EFI=$boot_part | ROOT=$root_part"
 
-# Wait for partition block devices to appear
+success "EFI : $boot_part"
+success "ROOT: $root_part"
+
+# -----------------------------------------------------------------------------
+# Wait for partitions
+# -----------------------------------------------------------------------------
+
 for part in "$boot_part" "$root_part"; do
-    for ((i=0; i<10; i++)); do
+
+    for ((i=0; i<15; i++)); do
         [[ -b "$part" ]] && break
         sleep 1
     done
-    [[ -b "$part" ]] || error "Partition $part did not appear after 10 seconds."
+
+    [[ -b "$part" ]] || error "Partition $part not found."
+
 done
 
+# -----------------------------------------------------------------------------
 # Formatting
-mkfs.fat -F32 -n "ARCH_EFI" "$boot_part" || error "Failed to format EFI partition."
-mkfs.ext4 -F -L "ARCH_ROOT" "$root_part" || error "Failed to format root partition."
+# -----------------------------------------------------------------------------
+
+log "Formatting partitions..."
+
+mkfs.fat -F32 "$boot_part"
+mkfs.ext4 -F "$root_part"
+
+# -----------------------------------------------------------------------------
+# Mount
+# -----------------------------------------------------------------------------
 
 mount "$root_part" /mnt
+
 mkdir -p /mnt/boot
+
 mount "$boot_part" /mnt/boot
 
-# Base system
+# -----------------------------------------------------------------------------
+# Pacstrap
+# -----------------------------------------------------------------------------
+
 log "Installing base system..."
+
 pacstrap -K /mnt \
-    base base-devel linux linux-firmware \
-    intel-ucode amd-ucode \
-    vim nano sudo networkmanager grub efibootmgr \
-    git wget curl rsync os-prober
+    base \
+    base-devel \
+    linux \
+    linux-firmware \
+    linux-headers \
+    sudo \
+    vim \
+    nano \
+    git \
+    curl \
+    wget \
+    rsync \
+    networkmanager \
+    grub \
+    efibootmgr \
+    os-prober \
+    reflector \
+    intel-ucode \
+    amd-ucode
 
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# Export variables for chroot
-export USERPASS="$pass1" USERNAME="$username" HOSTNAME="$hostname"
+# -----------------------------------------------------------------------------
+# Export vars
+# -----------------------------------------------------------------------------
 
-# Chroot configuration
-log "Configuring system..."
+export USERNAME="$username"
+export USERPASS="$pass1"
+export HOSTNAME="$hostname"
+
+# -----------------------------------------------------------------------------
+# CHROOT
+# -----------------------------------------------------------------------------
+
+log "Entering chroot..."
+
 arch-chroot /mnt /bin/bash << 'CHROOT_EOF'
-set -e
 
-# --- Logging functions (same as outside) ---
-BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
-log()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-success(){ echo -e "${GREEN}[✓]${NC} $1"; }
-warn()   { echo -e "${YELLOW}[⚠]${NC} $1"; }
-error()  { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
+set -Eeuo pipefail
+
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+log()     { echo -e "${BLUE}[INFO]${NC} $1"; }
+success() { echo -e "${GREEN}[✓]${NC} $1"; }
+warn()    { echo -e "${YELLOW}[⚠]${NC} $1"; }
+error()   { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
+
+trap 'error "Chroot failed on line $LINENO"' ERR
+
+# -----------------------------------------------------------------------------
+# Variables
+# -----------------------------------------------------------------------------
 
 USERNAME="${USERNAME}"
 USERPASS="${USERPASS}"
 HOSTNAME="${HOSTNAME}"
 
-ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
-hwclock --systohc
-# Ensure system time is correct (critical for TLS)
-timedatectl set-ntp true 2>/dev/null || true
+# -----------------------------------------------------------------------------
+# Timezone & locale
+# -----------------------------------------------------------------------------
 
-sed -i 's/^#\(en_US.UTF-8\)/\1/; s/^#\(ru_RU.UTF-8\)/\1/' /etc/locale.gen
+ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
+
+hwclock --systohc
+
+sed -i \
+'s/^#\(en_US.UTF-8\)/\1/;
+ s/^#\(ru_RU.UTF-8\)/\1/' \
+/etc/locale.gen
+
 locale-gen
+
 echo "LANG=ru_RU.UTF-8" > /etc/locale.conf
 echo "KEYMAP=us" > /etc/vconsole.conf
 
-echo "${HOSTNAME}" > /etc/hostname
-echo "127.0.0.1   localhost" > /etc/hosts
-echo "::1         localhost" >> /etc/hosts
-echo "127.0.1.1   ${HOSTNAME}.localdomain ${HOSTNAME}" >> /etc/hosts
+# -----------------------------------------------------------------------------
+# Hostname
+# -----------------------------------------------------------------------------
 
-passwd -l root
-useradd -m -G wheel,audio,video,storage -s /bin/bash "${USERNAME}"
-echo "${USERNAME}:${USERPASS}" | chpasswd
+echo "$HOSTNAME" > /etc/hostname
+
+cat > /etc/hosts << EOF
+127.0.0.1 localhost
+::1 localhost
+127.0.1.1 $HOSTNAME.localdomain $HOSTNAME
+EOF
+
+# -----------------------------------------------------------------------------
+# Users
+# -----------------------------------------------------------------------------
+
+useradd -m -G wheel,audio,video,storage -s /bin/bash "$USERNAME"
+
+echo "$USERNAME:$USERPASS" | chpasswd
+
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
+
 chmod 440 /etc/sudoers.d/wheel
 
-# Enable multilib and full system update
-sed -i '/^\s*#\s*\[multilib\]/,/^\s*#Include/s/^#//' /etc/pacman.conf
-pacman -Syu --noconfirm
+# -----------------------------------------------------------------------------
+# Pacman config
+# -----------------------------------------------------------------------------
 
-# Ensure SSL certificates are up‑to‑date (fixes "TLS connect error")
-log "Updating SSL certificates..."
-pacman -S --noconfirm ca-certificates ca-certificates-mozilla
+sed -i \
+'/^\s*#\s*\[multilib\]/,/^\s*#Include/s/^#//' \
+/etc/pacman.conf
+
+pacman -Sy --noconfirm
+
+# -----------------------------------------------------------------------------
+# Certificates
+# -----------------------------------------------------------------------------
+
+log "Updating certificates..."
+
+pacman -S --noconfirm \
+    ca-certificates \
+    ca-certificates-utils \
+    ca-certificates-mozilla
+
 update-ca-trust
 
-# Install KDE Plasma 6 and basic utilities (without default DM)
-log "Installing KDE Plasma 6..."
+# -----------------------------------------------------------------------------
+# KDE Plasma
+# -----------------------------------------------------------------------------
+
+log "Installing KDE Plasma..."
+
 pacman -S --noconfirm \
     plasma-meta \
-    networkmanager bluez bluez-utils \
-    xorg xorg-server xorg-xinit \
-    dolphin konsole \
-    discover packagekit-qt6
+    kde-applications \
+    xorg \
+    xorg-server \
+    xorg-xinit \
+    sddm \
+    discover \
+    packagekit-qt6 \
+    dolphin \
+    konsole \
+    ark \
+    kate \
+    rofi
 
-# NVIDIA drivers (DKMS for reliable kernel compatibility)
-log "Installing kernel headers and DKMS..."
-pacman -S --noconfirm linux-headers dkms
+# -----------------------------------------------------------------------------
+# NVIDIA
+# -----------------------------------------------------------------------------
 
 log "Installing NVIDIA drivers..."
-pacman -S --noconfirm nvidia-dkms nvidia-utils nvidia-settings lib32-nvidia-utils
 
-# mkinitcpio for NVIDIA
-sed -i 's/^MODULES=()/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
-grep -q "kms" /etc/mkinitcpio.conf || sed -i 's/\(HOOKS=.*base.*\)/\1 kms/' /etc/mkinitcpio.conf
-mkinitcpio -P || error "mkinitcpio failed."
-
-# Applications from official repositories
-log "Installing IDEs and applications..."
 pacman -S --noconfirm \
-    code pycharm-community-edition intellij-idea-community-edition \
-    ttf-liberation ttf-dejavu noto-fonts noto-fonts-cjk noto-fonts-emoji \
-    syncthing texstudio vlc steam qbittorrent \
-    texlive-core texlive-latexextra texlive-fontsextra texlive-langcyrillic
+    dkms \
+    nvidia-dkms \
+    nvidia-utils \
+    nvidia-settings \
+    lib32-nvidia-utils
 
-# Rofi (application launcher)
-log "Installing Rofi..."
-pacman -S --noconfirm rofi
+sed -i \
+'s/^MODULES=()/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' \
+/etc/mkinitcpio.conf
 
-# Install Go and Rust (needed for AUR builds: yay and eww)
-log "Installing Go and Rust..."
-pacman -S --noconfirm go rust
+mkinitcpio -P
 
-# AUR helper (yay)
-log "Setting up yay (AUR helper)..."
-echo "%wheel ALL=(ALL) NOPASSWD: /usr/bin/pacman, /usr/bin/makepkg, /usr/bin/git" > /etc/sudoers.d/temp-aur
+# -----------------------------------------------------------------------------
+# Applications
+# -----------------------------------------------------------------------------
+
+log "Installing applications..."
+
+pacman -S --noconfirm \
+    code \
+    pycharm-community-edition \
+    intellij-idea-community-edition \
+    steam \
+    vlc \
+    qbittorrent \
+    syncthing \
+    texstudio \
+    noto-fonts \
+    noto-fonts-cjk \
+    noto-fonts-emoji \
+    ttf-dejavu \
+    ttf-liberation \
+    bluez \
+    bluez-utils \
+    go \
+    rust
+
+# -----------------------------------------------------------------------------
+# Git fixes
+# -----------------------------------------------------------------------------
+
+log "Fixing Git HTTP issues..."
+
+git config --global http.version HTTP/1.1
+git config --global http.postBuffer 524288000
+
+# -----------------------------------------------------------------------------
+# yay install
+# -----------------------------------------------------------------------------
+
+log "Installing yay..."
+
+echo "%wheel ALL=(ALL) NOPASSWD: /usr/bin/pacman, /usr/bin/makepkg" \
+> /etc/sudoers.d/temp-aur
+
 chmod 440 /etc/sudoers.d/temp-aur
 
-su - "${USERNAME}" -c "
-    cd /tmp && \
-    git clone https://aur.archlinux.org/yay.git && \
-    cd yay && \
-    makepkg -si --noconfirm && \
-    cd / && rm -rf /tmp/yay
-"
+su - "$USERNAME" -c '
+set -e
+
+rm -rf /tmp/yay
+
+for i in 1 2 3 4 5
+do
+    echo "Attempt $i..."
+
+    if git clone https://aur.archlinux.org/yay.git /tmp/yay
+    then
+        cd /tmp/yay
+        makepkg -si --noconfirm
+        exit 0
+    fi
+
+    rm -rf /tmp/yay
+    sleep 5
+done
+
+exit 1
+'
 
 rm -f /etc/sudoers.d/temp-aur
 
-# Install AUR packages: EWW, PLM, etc.
-log "Installing EWW (Elkowars Wacky Widgets)..."
-su - "${USERNAME}" -c "yay -S --noconfirm eww"
+# -----------------------------------------------------------------------------
+# AUR packages
+# -----------------------------------------------------------------------------
 
-log "Installing Plasma Login Manager (PLM)..."
-if su - "${USERNAME}" -c "yay -S --noconfirm plasma-login-manager"; then
-    if [[ -f /usr/lib/systemd/system/plasma-login-manager.service ]]; then
-        log "Enabling Plasma Login Manager..."
-        systemctl enable plasma-login-manager 2>/dev/null || {
-            warn "Failed to enable PLM. Falling back to SDDM."
-            pacman -S --noconfirm sddm
-            systemctl enable sddm
-        }
-    else
-        warn "PLM service not found. Installing SDDM instead."
-        pacman -S --noconfirm sddm
-        systemctl enable sddm
-    fi
-else
-    warn "Could not install PLM. Installing SDDM as fallback."
-    pacman -S --noconfirm sddm
-    systemctl enable sddm
-fi
+log "Installing AUR packages..."
 
-log "Installing additional AUR applications..."
-su - "${USERNAME}" -c "yay -S --noconfirm android-studio brave-bin obsidian"
+su - "$USERNAME" -c "
+yay -S --noconfirm \
+    eww \
+    brave-bin \
+    obsidian \
+    android-studio
+"
 
-# Enable services
-systemctl enable NetworkManager bluetooth
+# -----------------------------------------------------------------------------
+# Services
+# -----------------------------------------------------------------------------
 
-# Bluetooth auto-enable
-sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
+systemctl enable NetworkManager
+systemctl enable bluetooth
+systemctl enable sddm
 
-# Keyboard layout (Alt+Shift)
+# -----------------------------------------------------------------------------
+# Bluetooth
+# -----------------------------------------------------------------------------
+
+sed -i \
+'s/^#AutoEnable=false/AutoEnable=true/' \
+/etc/bluetooth/main.conf
+
+# -----------------------------------------------------------------------------
+# Keyboard
+# -----------------------------------------------------------------------------
+
 mkdir -p /etc/X11/xorg.conf.d
-cat > /etc/X11/xorg.conf.d/00-keyboard.conf << 'XKB'
+
+cat > /etc/X11/xorg.conf.d/00-keyboard.conf << EOF
 Section "InputClass"
     Identifier "system-keyboard"
     MatchIsKeyboard "on"
     Option "XkbLayout" "us,ru"
     Option "XkbOptions" "grp:alt_shift_toggle"
 EndSection
-XKB
+EOF
 
-# GRUB installation
+# -----------------------------------------------------------------------------
+# GRUB
+# -----------------------------------------------------------------------------
+
 log "Installing GRUB..."
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck || error "GRUB installation failed."
-echo "GRUB_DISABLE_OS_PROBER=false" >> /etc/default/grub
+
+grub-install \
+    --target=x86_64-efi \
+    --efi-directory=/boot \
+    --bootloader-id=GRUB \
+    --recheck
+
+grep -q "GRUB_DISABLE_OS_PROBER" /etc/default/grub \
+|| echo "GRUB_DISABLE_OS_PROBER=false" >> /etc/default/grub
+
+os-prober || true
+
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# Optional GRUB theme
-log "Installing GRUB theme (Tela)..."
-if git clone --depth=1 https://github.com/vinceliuice/grub2-themes.git /tmp/grub-themes 2>/dev/null; then
+# -----------------------------------------------------------------------------
+# GRUB theme
+# -----------------------------------------------------------------------------
+
+log "Installing GRUB theme..."
+
+if git clone --depth=1 \
+https://github.com/vinceliuice/grub2-themes.git \
+/tmp/grub-themes
+then
+
     cd /tmp/grub-themes
-    if chmod +x install.sh && ./install.sh -t tela -s 1080p 2>/dev/null; then
-        if [[ -f "/boot/grub/themes/Tela/theme.txt" ]]; then
-            grep -q "^GRUB_THEME=" /etc/default/grub || echo 'GRUB_THEME="/boot/grub/themes/Tela/theme.txt"' >> /etc/default/grub
-            sed -i 's|^GRUB_THEME=.*|GRUB_THEME="/boot/grub/themes/Tela/theme.txt"|' /etc/default/grub
-            grub-mkconfig -o /boot/grub/grub.cfg
-            success "GRUB theme installed."
-        fi
-    else
-        warn "Failed to install GRUB theme."
-    fi
-    cd / && rm -rf /tmp/grub-themes
+
+    chmod +x install.sh
+
+    ./install.sh -t tela -s 1080p || true
+
+    grub-mkconfig -o /boot/grub/grub.cfg
+
+    rm -rf /tmp/grub-themes
+
 fi
 
-log "Chroot configuration complete."
+# -----------------------------------------------------------------------------
+# Finish
+# -----------------------------------------------------------------------------
+
+success "Chroot configuration completed."
+
 CHROOT_EOF
 
-# Additional disks setup
+# -----------------------------------------------------------------------------
+# Extra disks
+# -----------------------------------------------------------------------------
+
 if [[ ${#extra_disks[@]} -gt 0 ]]; then
-    log "Setting up additional disks..."
+
+    log "Configuring additional disks..."
+
     idx=1
+
     for disk in "${extra_disks[@]}"; do
-        log "Formatting $disk ..."
-        wipefs -a "$disk" 2>/dev/null || true
+
+        wipefs -af "$disk"
+
         parted -s "$disk" mklabel gpt
         parted -s "$disk" mkpart primary ext4 1MiB 100%
-        partprobe "$disk" 2>/dev/null || true
-        udevadm settle
-        partx -a "$disk" 2>/dev/null || true
-        udevadm trigger --subsystem-match=block 2>/dev/null || true
-        sleep 1
+
+        partprobe "$disk"
+        sleep 2
 
         part=$(get_partition "$disk" 1)
-        for ((i=0; i<10; i++)); do
-            [[ -b "$part" ]] && break
-            sleep 1
-        done
-        [[ -b "$part" ]] || error "Partition $part for additional disk did not appear."
 
-        mkfs.ext4 -F -L "STORAGE$idx" "$part" || error "mkfs failed: $part"
+        mkfs.ext4 -F "$part"
 
         UUID=$(blkid -s UUID -o value "$part")
-        [[ -z "$UUID" ]] && error "Could not get UUID for $part"
 
         mount_point="/storage$idx"
-        echo "UUID=$UUID $mount_point ext4 defaults,noatime 0 2" >> /mnt/etc/fstab
+
         mkdir -p "/mnt$mount_point"
-        success "$disk → $mount_point (UUID: ${UUID:0:8}...)"
+
+        echo \
+"UUID=$UUID $mount_point ext4 defaults,noatime 0 2" \
+>> /mnt/etc/fstab
+
+        success "$disk mounted as $mount_point"
+
         ((idx++))
+
     done
+
 fi
 
+# -----------------------------------------------------------------------------
+# Unmount
+# -----------------------------------------------------------------------------
+
+log "Unmounting..."
+
+umount -R /mnt
+
+# -----------------------------------------------------------------------------
 # Finish
-umount -R /mnt 2>/dev/null || true
+# -----------------------------------------------------------------------------
 
 cat << EOF
 
 ╔════════════════════════════════════════════╗
-║         🎉 Arch installation complete!     ║
+║         🎉 INSTALLATION COMPLETE           ║
 ╚════════════════════════════════════════════╝
 
 After reboot:
-  • You will be greeted by Plasma Login Manager (or SDDM if fallback was used).
-  • Press Meta+Space to launch Rofi.
-  • EWW is ready – create your own top bar.
 
-To set up dual‑boot with Windows 11, run the GRUB recovery script.
+ • KDE Plasma 6
+ • NVIDIA drivers
+ • yay
+ • EWW
+ • Rofi
+ • Brave
+ • Android Studio
+ • Obsidian
+
+are fully installed.
+
+Reboot now:
+    reboot
+
 EOF
