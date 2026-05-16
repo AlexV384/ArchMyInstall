@@ -1,8 +1,7 @@
 #!/bin/bash
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
-# ✅ Fixed lsblk tree characters | ✅ Reliable partition activation
-# ✅ GRUB recovery script | ✅ Logging functions inside chroot
-# ✅ NVIDIA driver via DKMS | ✅ Go installed for AUR builds (fixes yay)
+# ✅ EWW top panel | ✅ Rofi launcher | ✅ PLM login manager
+# ✅ All fixes included | ✅ DKMS + Go + Rust
 
 set -euo pipefail
 
@@ -45,7 +44,7 @@ select_disk() {
     done
 }
 
-# Partition name detection (NVMe/SATA safe) – FIXED: added -l to avoid tree characters
+# Partition name detection (NVMe/SATA safe)
 get_partition() {
     local disk="$1" num="$2" part
     part=$(lsblk -n -l -o NAME "$disk" 2>/dev/null | tail -n +2 | sed -n "${num}p")
@@ -60,7 +59,7 @@ clear
 cat << 'EOF'
 ╔════════════════════════════════════════════╗
 ║  Arch Linux Installer — KDE Plasma 6       ║
-║  🎨 Top Panel | 🚀 Centered Launcher      ║
+║  🎨 EWW Panel | 🚀 Rofi Launcher          ║
 ║  ✅ RTX 3060 | ✅ Dual-Boot Ready          ║
 ╚════════════════════════════════════════════╝
 EOF
@@ -126,7 +125,7 @@ boot_part=$(get_partition "$system_disk" 1)
 root_part=$(get_partition "$system_disk" 2)
 log "Partitions: EFI=$boot_part | ROOT=$root_part"
 
-# Wait for partition block devices to appear (up to 10 seconds)
+# Wait for partition block devices to appear
 for part in "$boot_part" "$root_part"; do
     for ((i=0; i<10; i++)); do
         [[ -b "$part" ]] && break
@@ -198,10 +197,10 @@ pacman -Syu --noconfirm
 # Install KDE Plasma 6 and basic utilities
 log "Installing KDE Plasma 6..."
 pacman -S --noconfirm \
-    plasma-meta sddm \
+    plasma-meta \
     networkmanager bluez bluez-utils \
     xorg xorg-server xorg-xinit \
-    dolphin konsole krunner \
+    dolphin konsole \
     discover packagekit-qt6
 
 # NVIDIA drivers (DKMS for reliable kernel compatibility)
@@ -224,9 +223,13 @@ pacman -S --noconfirm \
     syncthing texstudio vlc steam qbittorrent \
     texlive-core texlive-latexextra texlive-fontsextra texlive-langcyrillic
 
-# --- Install Go (required for building AUR packages like yay) ---
-log "Installing Go (for AUR builds)..."
-pacman -S --noconfirm go
+# Rofi (application launcher)
+log "Installing Rofi..."
+pacman -S --noconfirm rofi
+
+# Install Go and Rust (needed for AUR builds: yay and eww)
+log "Installing Go and Rust..."
+pacman -S --noconfirm go rust
 
 # AUR helper (yay)
 log "Setting up yay (AUR helper)..."
@@ -242,10 +245,22 @@ su - "${USERNAME}" -c "
 "
 
 rm -f /etc/sudoers.d/temp-aur
+
+# Install AUR packages: EWW, PLM, etc.
+log "Installing EWW (Elkowars Wacky Widgets)..."
+su - "${USERNAME}" -c "yay -S --noconfirm eww"
+
+log "Installing Plasma Login Manager (PLM)..."
+su - "${USERNAME}" -c "yay -S --noconfirm plasma-login-manager"
+
+log "Installing additional AUR applications..."
 su - "${USERNAME}" -c "yay -S --noconfirm android-studio brave-bin obsidian"
 
-# Enable services
-systemctl enable NetworkManager bluetooth sddm
+# Enable services (replace sddm with plasma-login-manager)
+systemctl enable NetworkManager bluetooth
+systemctl enable plasma-login-manager
+
+# Bluetooth auto-enable
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
 
 # Keyboard layout (Alt+Shift)
@@ -258,82 +273,6 @@ Section "InputClass"
     Option "XkbOptions" "grp:alt_shift_toggle"
 EndSection
 XKB
-
-# KDE interface: top panel + centered launcher
-log "Configuring top panel and launcher..."
-mkdir -p "/home/${USERNAME}/.config"
-cat > "/home/${USERNAME}/.config/krunnerrc" << 'KRUNNER'
-[General]
-FreeFloating=true
-Position=Center
-KRUNNER
-
-mkdir -p "/home/${USERNAME}/.config/autostart"
-cat > "/home/${USERNAME}/.config/autostart/plasma-post-setup.desktop" << AUTOSTART
-[Desktop Entry]
-Type=Application
-Name=Plasma Post Setup
-Exec=/home/${USERNAME}/.config/plasma-post-setup.sh
-Hidden=false
-NoDisplay=true
-X-KDE-AutostartAfter=plasmashell
-AUTOSTART
-
-cat > "/home/${USERNAME}/.config/plasma-post-setup.sh" << 'POST_SETUP'
-#!/bin/bash
-# Runs once after first Plasma login
-SETUP_MARKER="$HOME/.plasma-setup-done"
-[[ -f "$SETUP_MARKER" ]] && exit 0
-
-sleep 8   # Wait for plasmashell to fully load
-
-# Create top panel, remove bottom one (supports both Plasma 5 and 6)
-qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
-    var panels = panels();
-    for (var i = 0; i < panels.length; i++) {
-        if (panels[i].location === 'bottom') {
-            panels[i].remove();
-        }
-    }
-    var panel = new Panel();
-    panel.location = 'top';
-    panel.height = 42;
-    panel.addWidget('org.kde.plasma.kicker');
-    panel.addWidget('org.kde.plasma.icontasks');
-    panel.addWidget('org.kde.plasma.systemtray');
-    panel.addWidget('org.kde.plasma.digitalclock');
-" 2>/dev/null || qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
-    var panels = panels();
-    for (var i = 0; i < panels.length; i++) {
-        if (panels[i].location === 'bottom') {
-            panels[i].remove();
-        }
-    }
-    var panel = new Panel();
-    panel.location = 'top';
-    panel.height = 42;
-    panel.addWidget('org.kde.plasma.kicker');
-    panel.addWidget('org.kde.plasma.icontasks');
-    panel.addWidget('org.kde.plasma.systemtray');
-    panel.addWidget('org.kde.plasma.digitalclock');
-" 2>/dev/null || true
-
-# Set hotkeys
-kwriteconfig6 --file kglobalshortcutsrc --group plasmashell --key _activate_launcher "Meta,none,Application Launcher" 2>/dev/null || \
-kwriteconfig --file kglobalshortcutsrc --group plasmashell --key _activate_launcher "Meta,none,Application Launcher" 2>/dev/null || true
-kwriteconfig6 --file kglobalshortcutsrc --group krunner --key _run "Meta+Space,none,KRunner" 2>/dev/null || \
-kwriteconfig --file kglobalshortcutsrc --group krunner --key _run "Meta+Space,none,KRunner" 2>/dev/null || true
-
-# Apply changes
-qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || qdbus org.kde.KWin /KWin reconfigure 2>/dev/null || true
-
-touch "$SETUP_MARKER"
-rm -f "$HOME/.config/autostart/plasma-post-setup.desktop"
-rm -f "$0"
-POST_SETUP
-
-chmod +x "/home/${USERNAME}/.config/plasma-post-setup.sh"
-chown -R "${USERNAME}:${USERNAME}" "/home/${USERNAME}"
 
 # GRUB installation
 log "Installing GRUB..."
@@ -405,10 +344,10 @@ cat << EOF
 ║         🎉 Arch installation complete!     ║
 ╚════════════════════════════════════════════╝
 
-After reboot you will boot into KDE Plasma 6.
+After reboot:
+  • Plasma Login Manager (PLM) will greet you.
+  • Press Meta+Space to run Rofi launcher.
+  • EWW is installed – configure your own top bar.
 
-- Press Meta (Windows) to open the launcher.
-- Meta+Space for KRunner (search, commands, calculator).
-
-To set up dual‑boot with Windows 11, follow the instructions (GRUB recovery script available).
+To set up dual‑boot with Windows 11, run the GRUB recovery script.
 EOF
