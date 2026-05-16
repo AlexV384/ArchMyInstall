@@ -4,13 +4,13 @@
 # =============================================================================
 # ✅ KDE Plasma 6
 # ✅ NVIDIA RTX (DKMS)
-# ✅ yay AUR helper
+# ✅ yay AUR helper (with retry)
 # ✅ EWW + Rofi
-# ✅ SDDM fallback
+# ✅ Plasma Login Manager (fallback to SDDM)
 # ✅ Dual-boot ready
 # ✅ NVMe/SATA safe
 # ✅ Auto mirror optimization
-# ✅ Stable AUR/Git handling
+# ✅ Stable AUR/Git handling (retries for clone and install)
 # ✅ Extra disks auto-mount
 # =============================================================================
 
@@ -435,7 +435,6 @@ pacman -S --noconfirm \
     xorg \
     xorg-server \
     xorg-xinit \
-    sddm \
     discover \
     packagekit-qt6 \
     dolphin \
@@ -498,7 +497,7 @@ git config --global http.version HTTP/1.1
 git config --global http.postBuffer 524288000
 
 # -----------------------------------------------------------------------------
-# yay install
+# yay install (with retry)
 # -----------------------------------------------------------------------------
 
 log "Installing yay..."
@@ -534,18 +533,57 @@ exit 1
 rm -f /etc/sudoers.d/temp-aur
 
 # -----------------------------------------------------------------------------
-# AUR packages
+# AUR packages (with retry)
 # -----------------------------------------------------------------------------
 
 log "Installing AUR packages..."
 
-su - "$USERNAME" -c "
-yay -S --noconfirm \
-    eww \
-    brave-bin \
-    obsidian \
-    android-studio
-"
+# Helper function to install AUR package with yay, with retries
+aur_install() {
+    local pkg="$1"
+    local max_attempts=3
+    local attempt=1
+
+    while (( attempt <= max_attempts )); do
+        log "Installing $pkg (attempt $attempt/$max_attempts)..."
+
+        if su - "$USERNAME" -c "yay -S --noconfirm $pkg"; then
+            success "$pkg installed successfully"
+            return 0
+        fi
+
+        warn "Failed to install $pkg, retrying in 5 seconds..."
+        sleep 5
+        (( attempt++ ))
+    done
+
+    warn "Could not install $pkg after $max_attempts attempts"
+    return 1
+}
+
+# Install EWW (Elkowars Wacky Widgets)
+aur_install eww || warn "EWW installation failed, but continuing"
+
+# Install Plasma Login Manager (with SDDM fallback)
+if aur_install plasma-login-manager; then
+    if [[ -f /usr/lib/systemd/system/plasma-login-manager.service ]]; then
+        log "Enabling Plasma Login Manager..."
+        systemctl enable plasma-login-manager 2>/dev/null || true
+    else
+        warn "PLM service not found. Falling back to SDDM."
+        pacman -S --noconfirm sddm
+        systemctl enable sddm
+    fi
+else
+    warn "Installing SDDM as fallback..."
+    pacman -S --noconfirm sddm
+    systemctl enable sddm
+fi
+
+# Install additional AUR packages
+aur_install brave-bin || warn "brave-bin skipped"
+aur_install obsidian || warn "obsidian skipped"
+aur_install android-studio || warn "android-studio skipped"
 
 # -----------------------------------------------------------------------------
 # Services
@@ -553,7 +591,6 @@ yay -S --noconfirm \
 
 systemctl enable NetworkManager
 systemctl enable bluetooth
-systemctl enable sddm
 
 # -----------------------------------------------------------------------------
 # Bluetooth
@@ -692,9 +729,10 @@ After reboot:
 
  • KDE Plasma 6
  • NVIDIA drivers
- • yay
+ • yay (with retry)
  • EWW
  • Rofi
+ • Plasma Login Manager (or SDDM if fallback)
  • Brave
  • Android Studio
  • Obsidian
