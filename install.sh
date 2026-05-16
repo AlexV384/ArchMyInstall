@@ -1,7 +1,7 @@
 #!/bin/bash
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
-# ✅ EWW top panel | ✅ Rofi launcher | ✅ PLM login manager
-# ✅ All fixes included | ✅ DKMS + Go + Rust
+# ✅ EWW top panel | ✅ Rofi launcher | ✅ PLM login manager with SDDM fallback
+# ✅ Fixed SSL certs & time sync for AUR | ✅ DKMS + Go + Rust
 
 set -euo pipefail
 
@@ -173,6 +173,8 @@ HOSTNAME="${HOSTNAME}"
 
 ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
 hwclock --systohc
+# Ensure system time is correct (critical for TLS)
+timedatectl set-ntp true 2>/dev/null || true
 
 sed -i 's/^#\(en_US.UTF-8\)/\1/; s/^#\(ru_RU.UTF-8\)/\1/' /etc/locale.gen
 locale-gen
@@ -190,11 +192,16 @@ echo "${USERNAME}:${USERPASS}" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 chmod 440 /etc/sudoers.d/wheel
 
-# Enable multilib and update
+# Enable multilib and full system update
 sed -i '/^\s*#\s*\[multilib\]/,/^\s*#Include/s/^#//' /etc/pacman.conf
 pacman -Syu --noconfirm
 
-# Install KDE Plasma 6 and basic utilities
+# Ensure SSL certificates are up‑to‑date (fixes "TLS connect error")
+log "Updating SSL certificates..."
+pacman -S --noconfirm ca-certificates ca-certificates-mozilla
+update-ca-trust
+
+# Install KDE Plasma 6 and basic utilities (without default DM)
 log "Installing KDE Plasma 6..."
 pacman -S --noconfirm \
     plasma-meta \
@@ -251,14 +258,30 @@ log "Installing EWW (Elkowars Wacky Widgets)..."
 su - "${USERNAME}" -c "yay -S --noconfirm eww"
 
 log "Installing Plasma Login Manager (PLM)..."
-su - "${USERNAME}" -c "yay -S --noconfirm plasma-login-manager"
+if su - "${USERNAME}" -c "yay -S --noconfirm plasma-login-manager"; then
+    if [[ -f /usr/lib/systemd/system/plasma-login-manager.service ]]; then
+        log "Enabling Plasma Login Manager..."
+        systemctl enable plasma-login-manager 2>/dev/null || {
+            warn "Failed to enable PLM. Falling back to SDDM."
+            pacman -S --noconfirm sddm
+            systemctl enable sddm
+        }
+    else
+        warn "PLM service not found. Installing SDDM instead."
+        pacman -S --noconfirm sddm
+        systemctl enable sddm
+    fi
+else
+    warn "Could not install PLM. Installing SDDM as fallback."
+    pacman -S --noconfirm sddm
+    systemctl enable sddm
+fi
 
 log "Installing additional AUR applications..."
 su - "${USERNAME}" -c "yay -S --noconfirm android-studio brave-bin obsidian"
 
-# Enable services (replace sddm with plasma-login-manager)
+# Enable services
 systemctl enable NetworkManager bluetooth
-systemctl enable plasma-login-manager
 
 # Bluetooth auto-enable
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
@@ -345,9 +368,9 @@ cat << EOF
 ╚════════════════════════════════════════════╝
 
 After reboot:
-  • Plasma Login Manager (PLM) will greet you.
-  • Press Meta+Space to run Rofi launcher.
-  • EWW is installed – configure your own top bar.
+  • You will be greeted by Plasma Login Manager (or SDDM if fallback was used).
+  • Press Meta+Space to launch Rofi.
+  • EWW is ready – create your own top bar.
 
 To set up dual‑boot with Windows 11, run the GRUB recovery script.
 EOF
