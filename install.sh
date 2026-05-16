@@ -1,7 +1,7 @@
 #!/bin/bash
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
-# ✅ EWW top panel | ✅ Rofi launcher | ✅ PLM login manager with SDDM fallback
-# ✅ Fixed time sync for AUR TLS | ✅ DKMS + Go + Rust
+# ✅ EWW top panel | ✅ Rofi launcher | ✅ PLM login manager (no SDDM fallback)
+# ✅ Robust AUR handling with yay fallback | ✅ Detailed failure report
 
 set -euo pipefail
 
@@ -16,11 +16,11 @@ error()  { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
 ping -c 2 -W 5 archlinux.org &>/dev/null || error "No internet connection."
 [[ -d /sys/firmware/efi ]] || error "System must be booted in UEFI mode."
 
-# --- Time sync BEFORE chroot (critical for AUR TLS) ---
+# --- Time sync BEFORE chroot (critical for TLS) ---
 log "Syncing system time..."
 timedatectl set-ntp true
 sleep 2
-hwclock --systohc   # save accurate time to hardware clock
+hwclock --systohc
 
 # Disk selection with model and size (output goes to stderr so it's visible when called in subshell)
 select_disk() {
@@ -162,19 +162,21 @@ log "Configuring system..."
 arch-chroot /mnt /bin/bash << 'CHROOT_EOF'
 set -e
 
-# --- Logging functions ---
+# --- Logging & global failure list ---
 BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 log()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 success(){ echo -e "${GREEN}[✓]${NC} $1"; }
 warn()   { echo -e "${YELLOW}[⚠]${NC} $1"; }
 error()  { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
 
+FAILED_PKGS=()
+mark_failed() { FAILED_PKGS+=("$1"); }
+
 USERNAME="${USERNAME}"
 USERPASS="${USERPASS}"
 HOSTNAME="${HOSTNAME}"
 
 ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
-# Load system time from hardware clock (already correct from live system)
 hwclock --hctosys
 
 sed -i 's/^#\(en_US.UTF-8\)/\1/; s/^#\(ru_RU.UTF-8\)/\1/' /etc/locale.gen
@@ -197,12 +199,12 @@ chmod 440 /etc/sudoers.d/wheel
 sed -i '/^\s*#\s*\[multilib\]/,/^\s*#Include/s/^#//' /etc/pacman.conf
 pacman -Syu --noconfirm
 
-# --- Ensure SSL certificates are up‑to‑date BEFORE any AUR cloning ---
+# SSL certs
 log "Updating SSL certificates..."
 pacman -S --noconfirm ca-certificates-mozilla
 update-ca-trust
 
-# Install KDE Plasma 6 (without default DM)
+# KDE Plasma 6
 log "Installing KDE Plasma 6..."
 pacman -S --noconfirm \
     plasma-meta \
@@ -211,10 +213,9 @@ pacman -S --noconfirm \
     dolphin konsole \
     discover packagekit-qt6
 
-# NVIDIA drivers (DKMS)
+# NVIDIA
 log "Installing kernel headers and DKMS..."
 pacman -S --noconfirm linux-headers dkms
-
 log "Installing NVIDIA drivers..."
 pacman -S --noconfirm nvidia-dkms nvidia-utils nvidia-settings lib32-nvidia-utils
 
@@ -222,7 +223,7 @@ sed -i 's/^MODULES=()/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /e
 grep -q "kms" /etc/mkinitcpio.conf || sed -i 's/\(HOOKS=.*base.*\)/\1 kms/' /etc/mkinitcpio.conf
 mkinitcpio -P || error "mkinitcpio failed."
 
-# Applications from official repos
+# Applications
 log "Installing IDEs and applications..."
 pacman -S --noconfirm \
     code pycharm-community-edition intellij-idea-community-edition \
@@ -230,61 +231,90 @@ pacman -S --noconfirm \
     syncthing texstudio vlc steam qbittorrent \
     texlive-core texlive-latexextra texlive-fontsextra texlive-langcyrillic
 
-# Rofi launcher
 log "Installing Rofi..."
 pacman -S --noconfirm rofi
 
-# Go + Rust for AUR builds
 log "Installing Go and Rust..."
 pacman -S --noconfirm go rust
 
-# AUR helper (yay)
+# ----- AUR helper (yay) with fallback -----
 log "Setting up yay (AUR helper)..."
 echo "%wheel ALL=(ALL) NOPASSWD: /usr/bin/pacman, /usr/bin/makepkg, /usr/bin/git" > /etc/sudoers.d/temp-aur
 chmod 440 /etc/sudoers.d/temp-aur
 
-su - "${USERNAME}" -c "
+YAY_OK=false
+if su - "${USERNAME}" -c "
     cd /tmp && \
     git clone https://aur.archlinux.org/yay.git && \
     cd yay && \
     makepkg -si --noconfirm && \
     cd / && rm -rf /tmp/yay
-"
+" 2>&1; then
+    YAY_OK=true
+    success "yay installed from AUR."
+else
+    warn "AUR clone failed. Trying GitHub tarball..."
+    if su - "${USERNAME}" -c "
+        cd /tmp && \
+        wget -q 'https://github.com/Jguer/yay/archive/refs/heads/master.tar.gz' -O yay.tar.gz && \
+        tar xf yay.tar.gz && \
+        cd yay-master && \
+        makepkg -si --noconfirm && \
+        cd / && rm -rf /tmp/yay.tar.gz /tmp/yay-master
+    " 2>&1; then
+        YAY_OK=true
+        success "yay installed from GitHub tarball."
+    else
+        mark_failed "yay (AUR helper)"
+        warn "yay could not be installed. AUR packages will be skipped."
+    fi
+fi
 
 rm -f /etc/sudoers.d/temp-aur
 
-# Install EWW, PLM, and other AUR packages
-log "Installing EWW (Elkowars Wacky Widgets)..."
-su - "${USERNAME}" -c "yay -S --noconfirm eww"
-
-log "Installing Plasma Login Manager (PLM)..."
-if su - "${USERNAME}" -c "yay -S --noconfirm plasma-login-manager"; then
-    if [[ -f /usr/lib/systemd/system/plasma-login-manager.service ]]; then
-        log "Enabling Plasma Login Manager..."
-        systemctl enable plasma-login-manager 2>/dev/null || {
-            warn "Failed to enable PLM. Falling back to SDDM."
-            pacman -S --noconfirm sddm
-            systemctl enable sddm
-        }
+# ----- AUR packages (only if yay is available) -----
+if $YAY_OK; then
+    log "Installing EWW..."
+    if su - "${USERNAME}" -c "yay -S --noconfirm eww"; then
+        success "EWW installed."
     else
-        warn "PLM service not found. Installing SDDM instead."
-        pacman -S --noconfirm sddm
-        systemctl enable sddm
+        mark_failed "eww (Elkowars Wacky Widgets)"
+        warn "EWW installation failed."
     fi
+
+    log "Installing Plasma Login Manager (PLM)..."
+    if su - "${USERNAME}" -c "yay -S --noconfirm plasma-login-manager"; then
+        if systemctl enable plasma-login-manager 2>/dev/null; then
+            success "PLM enabled."
+        else
+            mark_failed "plasma-login-manager service enablement"
+            warn "PLM service not found or could not be enabled."
+        fi
+    else
+        mark_failed "plasma-login-manager"
+        warn "PLM installation failed. No login manager will be enabled."
+    fi
+
+    log "Installing additional AUR applications..."
+    for pkg in android-studio brave-bin obsidian; do
+        if ! su - "${USERNAME}" -c "yay -S --noconfirm $pkg"; then
+            mark_failed "$pkg"
+            warn "$pkg failed to install."
+        fi
+    done
 else
-    warn "Could not install PLM. Installing SDDM as fallback."
-    pacman -S --noconfirm sddm
-    systemctl enable sddm
+    # yay is missing, all AUR packages are skipped
+    for pkg in eww plasma-login-manager android-studio brave-bin obsidian; do
+        mark_failed "$pkg (no yay)"
+    done
+    warn "All AUR packages skipped because yay is not available."
 fi
 
-log "Installing additional AUR applications..."
-su - "${USERNAME}" -c "yay -S --noconfirm android-studio brave-bin obsidian"
-
-# Enable services
+# Enable basic services
 systemctl enable NetworkManager bluetooth
 sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf
 
-# Keyboard layout (Alt+Shift)
+# Keyboard layout
 mkdir -p /etc/X11/xorg.conf.d
 cat > /etc/X11/xorg.conf.d/00-keyboard.conf << 'XKB'
 Section "InputClass"
@@ -301,7 +331,7 @@ grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --re
 echo "GRUB_DISABLE_OS_PROBER=false" >> /etc/default/grub
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# GRUB theme (optional)
+# Optional GRUB theme
 log "Installing GRUB theme (Tela)..."
 if git clone --depth=1 https://github.com/vinceliuice/grub2-themes.git /tmp/grub-themes 2>/dev/null; then
     cd /tmp/grub-themes
@@ -318,6 +348,8 @@ if git clone --depth=1 https://github.com/vinceliuice/grub2-themes.git /tmp/grub
     cd / && rm -rf /tmp/grub-themes
 fi
 
+# Write failed packages list to a file for final report
+printf "%s\n" "${FAILED_PKGS[@]:-}" > /tmp/failed_packages.txt
 log "Chroot configuration complete."
 CHROOT_EOF
 
@@ -359,6 +391,12 @@ fi
 # Finish
 umount -R /mnt 2>/dev/null || true
 
+# Read failed packages list from installed system (if any)
+FAILED_LIST=""
+if [[ -f /mnt/tmp/failed_packages.txt ]]; then
+    FAILED_LIST=$(cat /mnt/tmp/failed_packages.txt)
+fi
+
 cat << EOF
 
 ╔════════════════════════════════════════════╗
@@ -366,9 +404,25 @@ cat << EOF
 ╚════════════════════════════════════════════╝
 
 After reboot:
-  • You will be greeted by Plasma Login Manager (or SDDM).
+  • If PLM was installed: you'll be greeted by Plasma Login Manager.
   • Press Meta+Space to launch Rofi.
-  • EWW is ready – create your own top bar.
+  • EWW is ready if installed.
+EOF
+
+if [[ -n "$FAILED_LIST" ]]; then
+    echo ""
+    echo "⚠️  The following packages were NOT installed:"
+    while IFS= read -r pkg; do
+        echo "   • $pkg"
+    done <<< "$FAILED_LIST"
+    echo ""
+    echo "  Possible reasons: AUR connectivity, SSL issues, or unsupported packages."
+    echo "  You can install them manually after rebooting:"
+    echo "    yay -S <package>"
+    echo "  (Make sure the time is correct and run 'update-ca-trust' if needed.)"
+fi
+
+cat << EOF
 
 To set up dual‑boot with Windows 11, run the GRUB recovery script.
 EOF
