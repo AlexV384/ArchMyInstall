@@ -225,9 +225,10 @@ pacstrap -K /mnt $PACSTAMP_PKGS || error "pacstrap failed."
 
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# Write password to secured location inside chroot
-cp "$PASSFILE" /mnt/tmp/.pswd
-chmod 600 /mnt/tmp/.pswd
+# Write password to secured location inside chroot (in /root, stable - not /tmp)
+mkdir -p /mnt/root
+cp "$PASSFILE" /mnt/root/.pswd
+chmod 600 /mnt/root/.pswd
 
 # Export only username and hostname (NOT password)
 export USERNAME="$username" HOSTNAME="$hostname"
@@ -248,7 +249,7 @@ mark_failed() { FAILED_PKGS+=("$1"); }
 
 USERNAME="${USERNAME}"
 HOSTNAME="${HOSTNAME}"
-PASSWD_FILE="/tmp/.pswd"
+PASSWD_FILE="/root/.pswd"
 
 ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
 hwclock --hctosys
