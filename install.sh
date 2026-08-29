@@ -1,6 +1,6 @@
 #!/bin/bash
 # Arch Linux Automated Installer — KDE Plasma 6, NVIDIA RTX 3060, Dual-Boot Ready
-# ✅ EWW top panel | ✅ Rofi launcher | ✅ PLM login manager (no SDDM fallback)
+# ✅ EWW top panel | ✅ PLM login manager (no SDDM fallback) | ✅ Discord | ✅ Freesm Launcher
 # ✅ Robust AUR handling with yay fallback | ✅ Fixed bugs from original
 # ✅ zram swap | ✅ pipewire | ✅ flatpak | ✅ fwupd | ✅ ufw | ✅ TRIM | ✅ logging
 
@@ -93,7 +93,7 @@ clear
 cat << 'EOF'
 ╔════════════════════════════════════════════╗
 ║  Arch Linux Installer — KDE Plasma 6       ║
-║  🎨 EWW Panel | 🚀 Rofi Launcher           ║
+║  🎨 EWW Panel | 💬 Discord | 🎮 Freesm     ║
 ║  ✅ RTX 3060 | ✅ Dual-Boot Ready           ║
 ╚════════════════════════════════════════════╝
 EOF
@@ -321,8 +321,13 @@ pacman -S --noconfirm --noprogressbar \
     texlive-core texlive-latexextra texlive-fontsextra texlive-langcyrillic 2>/dev/null || \
     warn "Some applications failed."
 
-log "Installing Rofi..."
-pacman -S --noconfirm --noprogressbar rofi 2>/dev/null || warn "Rofi install failed."
+log "Installing Discord..."
+if pacman -S --noconfirm --noprogressbar discord 2>/dev/null; then
+    success "Discord installed."
+else
+    mark_failed "discord"
+    warn "Discord install failed."
+fi
 
 log "Installing Go and Rust..."
 pacman -S --noconfirm --noprogressbar go rust 2>/dev/null || warn "Go/Rust install failed."
@@ -406,6 +411,14 @@ if $YAY_OK; then
         warn "PLM installation failed. No login manager will be enabled."
     fi
 
+    log "Installing Freesm Launcher..."
+    if runuser -u "${USERNAME}" -- bash -c "yay -S --noconfirm freesmlauncher-bin" 2>/dev/null; then
+        success "Freesm Launcher installed."
+    else
+        mark_failed "freesmlauncher-bin"
+        warn "Freesm Launcher install failed."
+    fi
+
     log "Installing additional AUR applications..."
     for pkg in android-studio brave-bin obsidian; do
         if ! runuser -u "${USERNAME}" -- bash -c "yay -S --noconfirm $pkg" 2>/dev/null; then
@@ -414,7 +427,7 @@ if $YAY_OK; then
         fi
     done
 else
-    for pkg in eww plasma-login-manager android-studio brave-bin obsidian; do
+    for pkg in eww plasma-login-manager freesmlauncher-bin android-studio brave-bin obsidian; do
         mark_failed "$pkg (no yay)"
     done
     warn "All AUR packages skipped because yay is not available."
@@ -541,7 +554,7 @@ cat << EOF
 
 After reboot:
   • If PLM was installed: you'll be greeted by Plasma Login Manager.
-  • Press Meta+Space to launch Rofi.
+  • Discord and Freesm Launcher installed (if no errors above).
   • EWW is ready if installed.
   • Flatpak + Flathub available.
   • UFW firewall active (deny inbound by default).
