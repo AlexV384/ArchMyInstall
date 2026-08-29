@@ -213,6 +213,8 @@ mkdir -p /mnt/boot
 mount "$boot_part" /mnt/boot
 
 # Base system
+# Enable [multilib] in the LIVE pacman.conf BEFORE pacstrap (needed for lib32-* pkgs)
+sed -i '/^\s*#\s*\[multilib\]/,/^\s*#Include/s/^#//' /etc/pacman.conf
 log "Installing base system..."
 PACSTAMP_PKGS="base base-devel linux linux-firmware"
 [[ -n "$UCODE" ]] && PACSTAMP_PKGS="$PACSTAMP_PKGS $UCODE"
