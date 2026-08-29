@@ -112,6 +112,8 @@ echo ""
 warn "WARNING: The system disk will be COMPLETELY ERASED!"
 system_disk=$(select_disk "Select disk for Arch Linux (SSD recommended):")
 success "System disk: $system_disk"
+log "Existing partitions on $system_disk:"
+lsblk -o NAME,SIZE,TYPE,MOUNTPOINT -n "$system_disk" 2>/dev/null | sed 's/^/  /' || true
 
 extra_disks=()
 warn "Additional disks will be formatted AND auto-mounted at /storageN"
@@ -157,15 +159,37 @@ fi
 
 # Partitioning
 log "Partitioning $system_disk ..."
-wipefs -a "$system_disk" 2>/dev/null || true
-parted -s "$system_disk" mklabel gpt
-parted -s "$system_disk" mkpart primary fat32 1MiB 513MiB
-parted -s "$system_disk" set 1 esp on
-parted -s "$system_disk" mkpart primary ext4 513MiB 100%
 
+# Free the disk: disable swap and unmount any of its partitions
+# (Arch live may auto-enable swap/mounts from this disk, blocking rescan)
+for p in /dev/${system_disk#/dev/}*; do
+    [[ -b "$p" ]] || continue
+    swapoff "$p" 2>/dev/null || true
+    umount "$p" 2>/dev/null || true
+done
+
+# Drop stale partition device nodes
+partprobe "$system_disk" 2>/dev/null || true
+for p in /dev/${system_disk#/dev/}*; do
+    [[ -b "$p" ]] || continue
+    partx -d "$p" 2>/dev/null || true
+done
+blockdev --rereadpt "$system_disk" 2>/dev/null || true
+
+wipefs -a "$system_disk" 2>/dev/null || true
+
+# parted: don't let set -e abort on the benign "could not inform kernel" warning
+parted -s "$system_disk" mklabel gpt || true
+parted -s "$system_disk" mkpart primary fat32 1MiB 513MiB || true
+parted -s "$system_disk" set 1 esp on || true
+parted -s "$system_disk" mkpart primary ext4 513MiB 100% || true
+
+# Notify the kernel about the new layout
+udevadm settle
 partprobe "$system_disk" 2>/dev/null || true
 udevadm settle
-partx -a "$system_disk" 2>/dev/null || true
+sleep 3
+partx -a "$system_disk" 2>/dev/null || partx -u "$system_disk" 2>/dev/null || true
 udevadm trigger --subsystem-match=block 2>/dev/null || true
 sleep 1
 
