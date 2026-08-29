@@ -394,10 +394,11 @@ if $YAY_OK; then
 
     log "Installing Plasma Login Manager (PLM)..."
     if runuser -u "${USERNAME}" -- bash -c "yay -S --noconfirm plasma-login-manager" 2>/dev/null; then
-        if systemctl enable plasma-login-manager 2>/dev/null; then
+        # PLM's systemd unit is named 'plasmalogin.service' (provides Alias=display-manager.service)
+        if systemctl enable plasmalogin.service 2>/dev/null; then
             success "PLM enabled."
         else
-            mark_failed "plasma-login-manager service enablement"
+            mark_failed "plasmalogin service enablement"
             warn "PLM service not found or could not be enabled."
         fi
     else
