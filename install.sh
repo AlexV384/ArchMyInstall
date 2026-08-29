@@ -139,7 +139,8 @@ read -rp "Proceed? (yes/y): " confirm
 [[ "$confirm" =~ ^(yes|y)$ ]] || error "Installation cancelled."
 
 # Save password securely
-PASSFILE=$(mktemp 0600)
+PASSFILE=$(mktemp)
+chmod 600 "$PASSFILE"
 echo "$pass1" > "$PASSFILE"
 
 # Timezone
